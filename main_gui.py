@@ -7,9 +7,8 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 import customtkinter as ctk
 
-from crypto_core import encrypt_file, decrypt_file, decrypt_file_ex
-from crypto_core.constants import PROFILES_SECURITY, PROFILES_INTEGRITY
-from crypto_core.header import _read_header_from_start, _parse_header, _read_header_from_end
+from crypto_core import encrypt_file, decrypt_file, decrypt_file_ex, get_keyfile_hash, read_metadata
+from crypto_core.constants import PROFILES_SECURITY, PROFILES_INTEGRITY, HDR_FLAG_HAS_FILENAME, PWCHK_RECORD_SIZE
 
 # -------------------------
 # UI Configuration
@@ -31,6 +30,7 @@ ERROR_MAP = {
     "PARAMS_OUT_OF_LIMITS": "Security parameters out of safe bounds.",
     "IO_ERROR": "Read/Write error.",
     "DECOMPRESSION_BOMB": "Security alert: output size exceeds expected limit (Decompression Bomb protection).",
+    "UNKNOWN_ERROR": "An unknown error occurred during encryption/decryption.",
 }
 
 # -------------------------
@@ -454,25 +454,17 @@ class CryptoApp(ctk.CTk):
         # Pause button logic
         self.btn_pause.configure(state="normal" if busy else "disabled", text="Pause", fg_color=["#3B8ED0", "#1F6AA5"])
 
-    def get_keyfile_bytes(self, is_dec=False):
+    def get_keyfile_hash(self, is_dec=False):
         use = self.dec_use_keyfile_var.get() if is_dec else self.use_keyfile_var.get()
         if not use: return None
         path = self.entry_dec_keyfile.get() if is_dec else self.entry_keyfile.get()
         if not path or not os.path.exists(path):
             return None
         
-        MAX_KEYFILE_SIZE = 1024 * 1024  # 1 MB
         try:
-            file_size = os.path.getsize(path)
-            if file_size > MAX_KEYFILE_SIZE:
-                messagebox.showerror("Keyfile Error", 
-                                     f"Keyfile too large: {file_size} bytes (max {MAX_KEYFILE_SIZE//1024}KB)")
-                return None
-            
-            with open(path, "rb") as f:
-                return f.read()
+            return get_keyfile_hash(path)
         except Exception as e:
-            messagebox.showerror("Keyfile Error", f"Could not read keyfile: {str(e)}")
+            messagebox.showerror("Keyfile Error", f"Could not process keyfile: {str(e)}")
             return None
 
     def ask_password(self):
@@ -481,36 +473,27 @@ class CryptoApp(ctk.CTk):
     def show_file_info(self, filepath):
         """Display technical details of encrypted file in info panel"""
         try:
-            with open(filepath, "rb") as f:
-                hdr = _read_header_from_start(f) or _read_header_from_end(f)
-                if not hdr:
-                    self.info_text.configure(state="normal")
-                    self.info_text.delete("1.0", "end")
-                    self.info_text.insert("1.0", "Unable to read file header")
-                    self.info_text.configure(state="disabled")
-                    return
-                    
-                params = _parse_header(hdr[0])
+            params = read_metadata(filepath)
+            
+            # Compression info
+            comp_flags = []
+            if params['flags'] & 0x02: comp_flags.append("zlib")
+            if params['flags'] & 0x08: comp_flags.append("lzma")
+            comp_str = ", ".join(comp_flags) if comp_flags else "None"
                 
-                # Compression info
-                comp_flags = []
-                if params['flags'] & 0x02: comp_flags.append("zlib")
-                if params['flags'] & 0x08: comp_flags.append("lzma")
-                comp_str = ", ".join(comp_flags) if comp_flags else "None"
-                
-                # Calculate file size and overhead
-                plain_size_mb = params['plain_size'] / (1024 * 1024)
-                stored_size_mb = params['stored_size'] / (1024 * 1024)
-                
-                block_size = params['k'] * params['shard_size']
-                num_blocks = (params['stored_size'] + block_size - 1) // block_size if params['stored_size'] > 0 else 0
-                overhead_pct = (params['r'] / params['k']) * 100
-                
-                fname_disp = params.get('filename')
-                if not fname_disp or (params['flags'] & HDR_FLAG_HAS_FILENAME == 0):
-                    fname_disp = "(Hidden)"
+            # Calculate file size and overhead
+            plain_size_mb = params['plain_size'] / (1024 * 1024)
+            stored_size_mb = params['stored_size'] / (1024 * 1024)
+            
+            block_size = params['k'] * params['shard_size']
+            num_blocks = (params['stored_size'] + block_size - 1) // block_size if params['stored_size'] > 0 else 0
+            overhead_pct = (params['r'] / params['k']) * 100
+            
+            fname_disp = params.get('filename')
+            if not fname_disp or (params['flags'] & HDR_FLAG_HAS_FILENAME == 0):
+                fname_disp = "(Hidden)"
 
-                info = f"""Format Version: {params['version']}
+            info = f"""Format Version: {params['version']}
 Plain Size:     {plain_size_mb:.2f} MB
 Stored Size:    {stored_size_mb:.2f} MB ({num_blocks} blocks)
 Integrity:      k={params['k']}, r={params['r']}, shard={params['shard_size']//1024}KB (Overhead: {overhead_pct:.0f}%)
@@ -518,10 +501,10 @@ Security:       Argon2id (t={params['argon2_time']}, m={params['argon2_mem_kib']
 Compression:    {comp_str}
 Filename:       {fname_disp}"""
                 
-                self.info_text.configure(state="normal")
-                self.info_text.delete("1.0", "end")
-                self.info_text.insert("1.0", info)
-                self.info_text.configure(state="disabled")
+            self.info_text.configure(state="normal")
+            self.info_text.delete("1.0", "end")
+            self.info_text.insert("1.0", info)
+            self.info_text.configure(state="disabled")
         except Exception as e:
             self.info_text.configure(state="normal")
             self.info_text.delete("1.0", "end")
@@ -604,7 +587,7 @@ Filename:       {fname_disp}"""
                 input_file=input_target,
                 output_file=out_path,
                 password=password,
-                keyfile=kf_bytes,
+                keyfile_hash=kf_hash,
                 compress_alg=file_comp if file_comp != "none" else None,
                 enable_pwchk=self.pwchk_var.get(),
                 k=int_p['k'], r=int_p['r'],
@@ -647,20 +630,14 @@ Filename:       {fname_disp}"""
             return
         
         # 2. Keyfile
-        kf_bytes = self.get_keyfile_bytes(is_dec=True)
-        if self.dec_use_keyfile_var.get() and not kf_bytes:
-             messagebox.showerror("Error", "Keyfile selected but could not be read.")
+        kf_hash = self.get_keyfile_hash(is_dec=True)
+        if self.dec_use_keyfile_var.get() and not kf_hash:
              return
 
-        # 3. Read Header & Metadata (Main Thread - fast enough)
-        # We do this here to get the suggested filename BEFORE asking save location.
-        from crypto_core.header import _read_header_from_start, _parse_header, _read_header_from_end
+        # 3. Read Metadata (Main Thread - fast enough)
         metadata = {}
         try:
-            with open(infile, "rb") as fq:
-                 h = _read_header_from_start(fq)
-                 if not h: h = _read_header_from_end(fq)
-                 if h: metadata = _parse_header(h[0])
+            metadata = read_metadata(infile)
         except Exception: 
             pass # Header might be corrupt or encrypted differently, just ignore metadata.
 
@@ -684,10 +661,10 @@ Filename:       {fname_disp}"""
 
         # 5. Start Thread
         threading.Thread(target=self._decryption_thread, 
-                         args=(infile, outfile, outdir, password, kf_bytes, extract), 
+                         args=(infile, outfile, outdir, password, kf_hash, extract), 
                          daemon=True).start()
         
-    def _decryption_thread(self, f_in, outfile, outdir, password, kf_bytes, extract):
+    def _decryption_thread(self, infile, outfile, outdir, password, kf_hash, extract):
         self.set_busy(True)
         self.btn_pause.configure(state="normal")
         temp_dec = None
@@ -703,10 +680,10 @@ Filename:       {fname_disp}"""
 
             # Decrypt
             ok, code, msg, meta = decrypt_file_ex(
-                input_file=f_in, 
+                input_file=infile, 
                 output_file=dest_path, 
                 password=password,
-                keyfile=kf_bytes,
+                keyfile_hash=kf_hash,
                 control_event=self._control_event,
                 progress_cb=lambda stage, done, total: self.set_status(f"{stage.capitalize()}: {int(done/total*100) if total > 0 else 0}%", done/total if total > 0 else 0)
             )

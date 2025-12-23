@@ -3,19 +3,8 @@ import sys
 import os
 import getpass
 import hashlib
-from .cipher import encrypt_file, decrypt_file_ex
+from .cipher import encrypt_file, decrypt_file_ex, get_keyfile_hash
 from .constants import PROFILES_SECURITY, PROFILES_INTEGRITY
-
-def _get_keyfile_hash(path):
-    """Compute SHA-256 of keyfile in a streaming fashion (AG-002)"""
-    sha = hashlib.sha256()
-    with open(path, "rb") as f:
-        while True:
-            chunk = f.read(64 * 1024)
-            if not chunk:
-                break
-            sha.update(chunk)
-    return sha.digest()
 
 def main():
     parser = argparse.ArgumentParser(description="CryptoV2 CLI - Secure File Encryptor/Decryptor")
@@ -61,7 +50,7 @@ def main():
             
             kf_hash = None
             if args.keyfile:
-                kf_hash = _get_keyfile_hash(args.keyfile)
+                kf_hash = get_keyfile_hash(args.keyfile)
 
             print(f"Encrypting {args.input} -> {args.output}...")
             encrypt_file(
@@ -81,7 +70,7 @@ def main():
 
             kf_hash = None
             if args.keyfile:
-                kf_hash = _get_keyfile_hash(args.keyfile)
+                kf_hash = get_keyfile_hash(args.keyfile)
 
             print(f"Decrypting {args.input} -> {args.output}...")
             ok, code, msg, meta = decrypt_file_ex(

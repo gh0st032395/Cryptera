@@ -62,6 +62,17 @@ def _validate_limits(*,
 
 import hmac
 
+def get_keyfile_hash(path: str) -> bytes:
+    """Compute SHA-256 of keyfile in a streaming fashion (AG-002)"""
+    sha = hashlib.sha256()
+    with open(path, "rb") as f:
+        while True:
+            chunk = f.read(64 * 1024)
+            if not chunk:
+                break
+            sha.update(chunk)
+    return sha.digest()
+
 def _derive_key(password: str, salt: bytes, t: int, mem_kib: int, par: int, 
                 keyfile: bytes = None, keyfile_hash: bytes = None) -> bytes:
     if not isinstance(password, str) or not password:
@@ -579,3 +590,35 @@ def decrypt_file_ex(input_file: str, output_file: str, password: str,
 def decrypt_file(input_file: str, output_file: str, password: str, progress_cb=None, keyfile_hash: bytes = None):
     ok, _, _, _ = decrypt_file_ex(input_file, output_file, password, progress_cb=progress_cb, keyfile_hash=keyfile_hash)
     return ok
+
+
+def read_metadata(input_file: str) -> dict:
+    """
+    Public API to read file metadata (version, filename, sizes, etc.)
+    """
+    with open(input_file, "rb") as f:
+        hdr_parts = _read_header_from_start(f)
+        if not hdr_parts:
+            hdr_parts = _read_header_from_end(f)
+        
+        if not hdr_parts:
+            raise HeaderInvalidError()
+        
+        hdr, _, _ = hdr_parts
+        params = _parse_header(hdr)
+        
+        # Clean up metadata for public use
+        meta = {
+            "filename": params.get("filename", ""),
+            "version": params.get("version"),
+            "k": params.get("k"),
+            "r": params.get("r"),
+            "shard_size": params.get("shard_size"),
+            "plain_size": params.get("plain_size"),
+            "stored_size": params.get("stored_size"),
+            "flags": params.get("flags", 0),
+            "argon2_time": params.get("argon2_time"),
+            "argon2_mem_kib": params.get("argon2_mem_kib"),
+            "argon2_par": params.get("argon2_par"),
+        }
+        return meta
