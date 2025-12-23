@@ -125,11 +125,25 @@ def _safe_tar_extract(tar: tarfile.TarFile, out_dir: str, progress_cb=None):
     total = max(1, len(members))
     
     for i, member in enumerate(members):
-        # 1. Path Traversal Check
+        # 1. Path Traversal & Absolute Path Check
+        # Normalize to avoid deceptive prefixes
+        out_dir = os.path.abspath(out_dir)
+        
+        # Check if member.name is absolute
+        if os.path.isabs(member.name):
+            raise Exception(f"Malicious path detected (Absolute): {member.name}")
+
         target_path = os.path.join(out_dir, member.name)
         abs_target = os.path.abspath(target_path)
         
-        if not abs_target.startswith(out_dir):
+        # Use commonpath to ensure the target is strictly inside out_dir
+        try:
+            is_inside = os.path.commonpath([out_dir, abs_target]) == out_dir
+        except ValueError:
+            # Paths on different drives on Windows will raise ValueError
+            is_inside = False
+            
+        if not is_inside:
             raise Exception(f"Malicious path detected (ZipSlip): {member.name}")
             
         # 2. Symlink/Hardlink Check - ENHANCED
@@ -171,7 +185,7 @@ class CryptoApp(ctk.CTk):
         
         # Profile Vars
         self.profile_sec_var = ctk.StringVar(value="Standard")
-        self.profile_int_var = ctk.StringVar(value="High")
+        self.profile_int_var = ctk.StringVar(value="Medium")
 
         self.setup_encrypt_tab()
         self.setup_decrypt_tab()
@@ -357,7 +371,12 @@ class CryptoApp(ctk.CTk):
             # Pretty print info
             ratio = (val['r'] / val['k']) * 100
             desc = f"{name} (Redundancy: {ratio:.0f}%, k={val['k']}, r={val['r']})"
-            ctk.CTkRadioButton(frm_int, text=desc, variable=self.profile_int_var, value=name).pack(anchor="w", padx=20, pady=5)
+            
+            rb = ctk.CTkRadioButton(frm_int, text=desc, variable=self.profile_int_var, value=name)
+            rb.pack(anchor="w", padx=20, pady=5)
+            
+            if name in ["High", "Max"]:
+                ctk.CTkLabel(frm_int, text=f"  ⚠️ Warning: High storage overhead!", text_color="orange", font=("Arial", 10)).pack(anchor="w", padx=40)
             
         ctk.CTkButton(top, text="Close", command=top.destroy).pack(pady=20)
 

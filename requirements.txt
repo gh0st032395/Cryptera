@@ -1,1 +1,7 @@
-C:\ProgramData\Flexlm\lmgrd
+pycryptodome
+argon2-cffi
+numpy
+customtkinter
+pytest
+ruff
+mypy

@@ -36,28 +36,28 @@ def _validate_limits(*,
                      num_blocks: Optional[int] = None) -> None:
     # Argon2 limits
     if not (ARGON2_TIME_MIN <= argon2_time <= ARGON2_TIME_MAX):
-        raise DecryptError(DECRYPT_PARAMS_OUT_OF_LIMITS, f"argon2_time out of limits: {argon2_time}")
+        raise LimitsExceededError(f"argon2_time out of limits: {argon2_time}")
     if not (ARGON2_MEM_KIB_MIN <= argon2_mem_kib <= ARGON2_MEM_KIB_MAX):
-        raise DecryptError(DECRYPT_PARAMS_OUT_OF_LIMITS, f"argon2_mem_kib out of limits: {argon2_mem_kib}")
+        raise LimitsExceededError(f"argon2_mem_kib out of limits: {argon2_mem_kib}")
     if not (ARGON2_PAR_MIN <= argon2_par <= ARGON2_PAR_MAX):
-        raise DecryptError(DECRYPT_PARAMS_OUT_OF_LIMITS, f"argon2_par out of limits: {argon2_par}")
+        raise LimitsExceededError(f"argon2_par out of limits: {argon2_par}")
 
     # ECC layout limits
     if not (K_MIN <= k <= K_MAX):
-        raise DecryptError(DECRYPT_PARAMS_OUT_OF_LIMITS, f"k out of limits: {k}")
+        raise LimitsExceededError(f"k out of limits: {k}")
     if not (R_MIN <= r <= R_MAX):
-        raise DecryptError(DECRYPT_PARAMS_OUT_OF_LIMITS, f"r out of limits: {r}")
+        raise LimitsExceededError(f"r out of limits: {r}")
     if k + r > 255:
-        raise DecryptError(DECRYPT_PARAMS_OUT_OF_LIMITS, f"k+r must be <= 255, got {k+r}")
+        raise LimitsExceededError(f"k+r must be <= 255, got {k+r}")
 
     # Shard size limits
     if not (SHARD_SIZE_MIN <= shard_size <= SHARD_SIZE_MAX):
-        raise DecryptError(DECRYPT_PARAMS_OUT_OF_LIMITS, f"shard_size out of limits: {shard_size}")
+        raise LimitsExceededError(f"shard_size out of limits: {shard_size}")
 
     # Blocks limit (nonce safety)
     if num_blocks is not None:
         if not (0 < num_blocks < MAX_BLOCKS_U32):
-            raise DecryptError(DECRYPT_PARAMS_OUT_OF_LIMITS, f"num_blocks out of limits: {num_blocks}")
+            raise LimitsExceededError(f"num_blocks out of limits: {num_blocks}")
 
 
 import hmac
@@ -147,15 +147,45 @@ def _decompression_stream(f_out, alg: str):
 
         def write(self, b):
             if self.dec:
+                # Decompress as much as possible. 
+                # Note: if max_length was used, we'd need a loop here, but we don't.
+                # However, being robust doesn't hurt.
                 data = self.dec.decompress(b)
                 if data:
                     self.target.write(data)
+                
+                # Check for unconsumed tail (though unlikely without max_length)
+                while hasattr(self.dec, 'unconsumed_tail') and self.dec.unconsumed_tail:
+                    tail = self.dec.unconsumed_tail
+                    data = self.dec.decompress(tail)
+                    if data:
+                        self.target.write(data)
+                    else:
+                        break
             else:
                 self.target.write(b)
         
         def close(self):
-            # lzma/zlib streams might have trailing data, usually handled by decompress()
-            pass
+            if self.dec:
+                # Some decompressors might have residues if not fully finished
+                # We call decompress with empty bytes to signal EOF if supported by the object style
+                try:
+                    # zlib/lzma decompressors in Python don't strictly have a flush() 
+                    # but we can check if they are finished.
+                    if hasattr(self.dec, 'unconsumed_tail') and self.dec.unconsumed_tail:
+                        while self.dec.unconsumed_tail:
+                            data = self.dec.decompress(self.dec.unconsumed_tail)
+                            if data:
+                                self.target.write(data)
+                            else:
+                                break
+                                
+                except Exception:
+                    pass
+            # We don't close self.target here because it's usually managed by a 'with' block outside
+            # but we ensure it is flushed.
+            if hasattr(self.target, 'flush'):
+                self.target.flush()
             
     return DecompressorWriter(f_out, alg)
 
@@ -248,59 +278,65 @@ def encrypt_file(input_file: str, output_file: str, password: str,
         key = _derive_key(password, salt, argon2_t, argon2_m, argon2_p, keyfile)
 
         out_dir = os.path.dirname(os.path.abspath(output_file)) or "."
-        with open(processing_file, "rb") as f_in, tempfile.NamedTemporaryFile("wb", delete=False, dir=out_dir) as f_out:
-            tmp_name = f_out.name
+        tmp_name = None
+        try:
+            with open(processing_file, "rb") as f_in, tempfile.NamedTemporaryFile("wb", delete=False, dir=out_dir, prefix="tmp_enc_") as f_out:
+                tmp_name = f_out.name
 
-            f_out.write(start_header)
+                f_out.write(start_header)
 
-            if flags & HDR_FLAG_PWCHK:
-                nonce = _nonce12(nonce_base, 0xFFFFFFFF, 0xFFFFFFFF)
-                cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
-                cipher.update(prefix + PWCHK_MAGIC)
-                ct = cipher.encrypt(PWCHK_PLAINTEXT)
-                tag = cipher.digest()
-                crc = zlib.crc32(ct + tag) & 0xFFFFFFFF
-
-                f_out.write(PWCHK_MAGIC)
-                f_out.write(struct.pack(">" + "I" * CRC_COPIES, *([crc] * CRC_COPIES)))
-                f_out.write(ct)
-                f_out.write(tag)
-
-            _progress(progress_cb, "encrypt", 0, num_blocks)
-
-            for block_index in range(num_blocks):
-                # Check Pause
-                if control_event and not control_event.is_set():
-                    control_event.wait()
-
-                chunk = f_in.read(block_size)
-                if len(chunk) < block_size:
-                    chunk += b"\x00" * (block_size - len(chunk))
-
-                data = np.frombuffer(chunk, dtype=np.uint8).reshape(k, shard_size).copy()
-                coded = _fec_encode(data, G, k, r)
-
-                for shard_index in range(m):
-                    shard_plain = coded[shard_index].tobytes()
-                    nonce = _nonce12(nonce_base, block_index, shard_index)
-
+                if flags & HDR_FLAG_PWCHK:
+                    nonce = _nonce12(nonce_base, 0xFFFFFFFF, 0xFFFFFFFF)
                     cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
-                    cipher.update(prefix + struct.pack(">II", block_index, shard_index))
-
-                    ct = cipher.encrypt(shard_plain)
+                    cipher.update(prefix + PWCHK_MAGIC)
+                    ct = cipher.encrypt(PWCHK_PLAINTEXT)
                     tag = cipher.digest()
-
                     crc = zlib.crc32(ct + tag) & 0xFFFFFFFF
+
+                    f_out.write(PWCHK_MAGIC)
                     f_out.write(struct.pack(">" + "I" * CRC_COPIES, *([crc] * CRC_COPIES)))
                     f_out.write(ct)
                     f_out.write(tag)
 
-                _progress(progress_cb, "encrypt", block_index + 1, num_blocks)
+                _progress(progress_cb, "encrypt", 0, num_blocks)
 
-            f_out.write(trailer)
+                for block_index in range(num_blocks):
+                    # Check Pause
+                    if control_event and not control_event.is_set():
+                        control_event.wait()
 
-        # os.replace handles overwrite atomically on all platforms
-        os.replace(tmp_name, output_file)
+                    chunk = f_in.read(block_size)
+                    if len(chunk) < block_size:
+                        chunk += b"\x00" * (block_size - len(chunk))
+
+                    data = np.frombuffer(chunk, dtype=np.uint8).reshape(k, shard_size).copy()
+                    coded = _fec_encode(data, G, k, r)
+
+                    for shard_index in range(m):
+                        shard_plain = coded[shard_index].tobytes()
+                        nonce = _nonce12(nonce_base, block_index, shard_index)
+
+                        cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
+                        cipher.update(prefix + struct.pack(">II", block_index, shard_index))
+
+                        ct = cipher.encrypt(shard_plain)
+                        tag = cipher.digest()
+
+                        crc = zlib.crc32(ct + tag) & 0xFFFFFFFF
+                        f_out.write(struct.pack(">" + "I" * CRC_COPIES, *([crc] * CRC_COPIES)))
+                        f_out.write(ct)
+                        f_out.write(tag)
+
+                    _progress(progress_cb, "encrypt", block_index + 1, num_blocks)
+
+                f_out.write(trailer)
+
+            # Atomic rename
+            os.replace(tmp_name, output_file)
+            tmp_name = None # Clear so finally doesn't delete it
+        finally:
+            if tmp_name and os.path.exists(tmp_name):
+                os.remove(tmp_name)
         
     finally:
         if temp_compressed and os.path.exists(temp_compressed):
@@ -328,7 +364,7 @@ def decrypt_file_ex(input_file: str, output_file: str, password: str,
             else:
                 hdr_end = _read_header_from_end(f_in)
                 if hdr_end is None:
-                    raise DecryptError(DECRYPT_HEADER_INVALID, "Header not found.")
+                    raise HeaderInvalidError("Header not found.")
                 hdr, hdr_len, hdr_crc = hdr_end
 
             params = _parse_header(hdr)
@@ -342,11 +378,9 @@ def decrypt_file_ex(input_file: str, output_file: str, password: str,
             
             # Validate version - support V1 (backward compat) and V2 (current)
             if params["version"] > VERSION:
-                raise DecryptError(DECRYPT_HEADER_INVALID, 
-                                   f"Unsupported version {params['version']} (max {VERSION})")
+                raise UnsupportedVersionError(f"Unsupported version {params['version']} (max {VERSION})")
             if params["version"] < 1:
-                raise DecryptError(DECRYPT_HEADER_INVALID, 
-                                   f"Invalid version {params['version']}")
+                raise HeaderInvalidError(f"Invalid version {params['version']}")
 
             k = params["k"]
             r = params["r"]
@@ -389,8 +423,7 @@ def decrypt_file_ex(input_file: str, output_file: str, password: str,
                 f_in.seek(data_offset)
                 blob = f_in.read(PWCHK_RECORD_SIZE)
                 if len(blob) != PWCHK_RECORD_SIZE:
-                    raise DecryptError(DECRYPT_TRUNCATED, 
-                                       f"File truncated at password check record (expected {PWCHK_RECORD_SIZE} bytes, got {len(blob)})")
+                    raise TruncatedFileError(f"File truncated at password check record (expected {PWCHK_RECORD_SIZE} bytes, got {len(blob)})")
                 off = 4 + (4*CRC_COPIES)
                 ct = blob[off:off+PWCHK_PLAINTEXT_LEN]
                 off += PWCHK_PLAINTEXT_LEN
@@ -402,90 +435,92 @@ def decrypt_file_ex(input_file: str, output_file: str, password: str,
                 try:
                     pt = cipher.decrypt_and_verify(ct, tag)
                 except ValueError:
-                    raise DecryptError(DECRYPT_PASSWORD_INVALID, "Wrong password (PW-check failed).")
+                    raise WrongPasswordError("Wrong password or corrupted keyfile.")
                     
                 data_offset += PWCHK_RECORD_SIZE
 
             G = _get_G(k, r)
 
             out_dir = os.path.dirname(os.path.abspath(output_file)) or "."
-            with tempfile.NamedTemporaryFile("wb", delete=False, dir=out_dir) as f_out:
-                tmp_name = f_out.name
-                
-                # Wrap f_out with decompressor if needed
-                writer = _decompression_stream(f_out, comp_alg)
-
-                f_in.seek(data_offset)
-                _progress(progress_cb, "decrypt", 0, num_blocks)
-
-                for block_index in range(num_blocks):
-                    # Check Pause
-                    if control_event and not control_event.is_set():
-                        control_event.wait()
-
-                    plain_shards = [None] * m
-                    present = [False] * m
-
-                    for shard_index in range(m):
-                        crc_fields = f_in.read(4 * CRC_COPIES)
-                        if not crc_fields: break  # Normal end of blocks
-                        if len(crc_fields) != 4 * CRC_COPIES:
-                            raise DecryptError(DECRYPT_TRUNCATED, 
-                                               f"File truncated at CRC fields (block {block_index}, shard {shard_index})")
-                        crc_vals = list(struct.unpack(">" + "I" * CRC_COPIES, crc_fields))
-                        
-                        ct = f_in.read(shard_size)
-                        if len(ct) != shard_size:
-                            raise DecryptError(DECRYPT_TRUNCATED, 
-                                               f"File truncated at shard data (block {block_index}, shard {shard_index})")
-                        tag = f_in.read(TAG_LEN)
-                        if len(tag) != TAG_LEN:
-                            raise DecryptError(DECRYPT_TRUNCATED, 
-                                               f"File truncated at authentication tag (block {block_index}, shard {shard_index})")
-                        
-                        crc_calc = zlib.crc32(ct + tag) & 0xFFFFFFFF
-                        if crc_calc not in crc_vals: continue
-
-                        nonce = _nonce12(params["nonce_base"], block_index, shard_index)
-                        cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
-                        cipher.update(prefix + struct.pack(">II", block_index, shard_index))
-
-                        try:
-                            pt = cipher.decrypt_and_verify(ct, tag)
-                            plain_shards[shard_index] = np.frombuffer(pt, dtype=np.uint8)
-                            present[shard_index] = True
-                        except ValueError:
-                            continue
-
-                    if all(present[:k]):
-                        data_block = np.stack(plain_shards[:k], axis=0).astype(np.uint8)
-                    else:
-                        if sum(present) < k:
-                            raise DecryptError(DECRYPT_CORRUPT_BEYOND_FEC, f"Block {block_index} failed.")
-                        data_block = _fec_decode(plain_shards, present, G, k, r)
-
-                    byte_data = data_block.tobytes()
+            tmp_name = None
+            try:
+                with tempfile.NamedTemporaryFile("wb", delete=False, dir=out_dir, prefix="tmp_dec_") as f_out:
+                    tmp_name = f_out.name
                     
-                    # Handle padding
-                    if block_index == num_blocks - 1:
-                        valid_bytes = params["file_size"] - (block_index * block_size)
-                        writer.write(byte_data[:valid_bytes])
-                    else:
-                        writer.write(byte_data)
+                    # Wrap f_out with decompressor if needed
+                    writer = _decompression_stream(f_out, comp_alg)
 
-                    _progress(progress_cb, "decrypt", block_index + 1, num_blocks)
-                
-                writer.close()
+                    f_in.seek(data_offset)
+                    _progress(progress_cb, "decrypt", 0, num_blocks)
+
+                    for block_index in range(num_blocks):
+                        # Check Pause
+                        if control_event and not control_event.is_set():
+                            control_event.wait()
+
+                        plain_shards = [None] * m
+                        present = [False] * m
+
+                        for shard_index in range(m):
+                            crc_fields = f_in.read(4 * CRC_COPIES)
+                            if not crc_fields: break  # Normal end of blocks
+                            if len(crc_fields) != 4 * CRC_COPIES:
+                                raise TruncatedFileError(f"File truncated at CRC fields (block {block_index}, shard {shard_index})")
+                            crc_vals = list(struct.unpack(">" + "I" * CRC_COPIES, crc_fields))
+                            
+                            ct = f_in.read(shard_size)
+                            if len(ct) != shard_size:
+                                raise TruncatedFileError(f"File truncated at shard data (block {block_index}, shard {shard_index})")
+                            tag = f_in.read(TAG_LEN)
+                            if len(tag) != TAG_LEN:
+                                raise TruncatedFileError(f"File truncated at authentication tag (block {block_index}, shard {shard_index})")
+                            
+                            crc_calc = zlib.crc32(ct + tag) & 0xFFFFFFFF
+                            if crc_calc not in crc_vals: continue
+
+                            nonce = _nonce12(params["nonce_base"], block_index, shard_index)
+                            cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
+                            cipher.update(prefix + struct.pack(">II", block_index, shard_index))
+
+                            try:
+                                pt = cipher.decrypt_and_verify(ct, tag)
+                                plain_shards[shard_index] = np.frombuffer(pt, dtype=np.uint8)
+                                present[shard_index] = True
+                            except ValueError:
+                                continue
+
+                        if all(present[:k]):
+                            data_block = np.stack(plain_shards[:k], axis=0).astype(np.uint8)
+                        else:
+                            if sum(present) < k:
+                                raise CorruptedDataError(f"Block {block_index} failed recovery (too many corrupted shards).")
+                            data_block = _fec_decode(plain_shards, present, G, k, r)
+
+                        byte_data = data_block.tobytes()
+                        
+                        # Handle padding
+                        if block_index == num_blocks - 1:
+                            valid_bytes = params["file_size"] - (block_index * block_size)
+                            writer.write(byte_data[:valid_bytes])
+                        else:
+                            writer.write(byte_data)
+
+                        _progress(progress_cb, "decrypt", block_index + 1, num_blocks)
+                    
+                    writer.close()
+
+                # Atomic rename
+                os.replace(tmp_name, output_file)
+                tmp_name = None
+            finally:
+                if tmp_name and os.path.exists(tmp_name):
+                    os.remove(tmp_name)
 
     except DecryptError as e:
-        if tmp_name and os.path.exists(tmp_name): os.remove(tmp_name)
         return False, e.code, e.message, metadata
     except Exception as e:
-        if tmp_name and os.path.exists(tmp_name): os.remove(tmp_name)
         return False, DECRYPT_UNKNOWN_ERROR, str(e), metadata
 
-    # os.replace handles overwrite atomically on all platforms
-    os.replace(tmp_name, output_file)
     return True, DECRYPT_OK, "OK", metadata
 
 

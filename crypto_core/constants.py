@@ -81,12 +81,43 @@ PWCHK_RECORD_SIZE = 4 + (4 * CRC_COPIES) + PWCHK_PLAINTEXT_LEN + TAG_LEN
 # =========================
 # Decrypt diagnostics
 # =========================
-class DecryptError(Exception):
+class CryptoError(Exception):
+    """Base for project exceptions"""
+    pass
+
+class DecryptError(CryptoError):
     def __init__(self, code: str, message: str = ""):
         super().__init__(message)
         self.code = code
         self.message = message or code
 
+class WrongPasswordError(DecryptError):
+    def __init__(self, message="Incorrect password or keyfile."):
+        super().__init__("PASSWORD_INVALID", message)
+
+class CorruptedDataError(DecryptError):
+    def __init__(self, message="Data is corrupted and cannot be recovered."):
+        super().__init__("CORRUPT_BEYOND_FEC", message)
+
+class UnsupportedVersionError(DecryptError):
+    def __init__(self, message="Unsupported file version."):
+        super().__init__("HEADER_INVALID", message)
+
+class HeaderInvalidError(DecryptError):
+    def __init__(self, message="File header is invalid or missing."):
+        super().__init__("HEADER_INVALID", message)
+
+class TruncatedFileError(DecryptError):
+    def __init__(self, message="File is truncated or incomplete."):
+        super().__init__("TRUNCATED", message)
+
+class IOErrorUserData(DecryptError):
+    def __init__(self, message="Read/Write error on user data."):
+        super().__init__("IO_ERROR", message)
+
+class LimitsExceededError(DecryptError):
+    def __init__(self, message="Security parameters out of safe bounds."):
+        super().__init__("PARAMS_OUT_OF_LIMITS", message)
 
 DECRYPT_OK = "OK"
 DECRYPT_PASSWORD_INVALID = "PASSWORD_INVALID"
@@ -111,7 +142,7 @@ PROFILES_SECURITY = {
 
 PROFILES_INTEGRITY = {
     "Low":      {"k": 28, "r": 4},  # ~14%
-    "Medium":   {"k": 24, "r": 8},  # ~33%
-    "High":     {"k": 12, "r": 12}, # 100% (Default)
+    "Medium":   {"k": 24, "r": 8},  # ~33% (Default)
+    "High":     {"k": 12, "r": 12}, # 100%
     "Max":      {"k": 8, "r": 24}   # 300%
 }
