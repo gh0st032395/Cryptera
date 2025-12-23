@@ -4,7 +4,7 @@
 MAGIC = b"ECF1"     # file magic
 TRAILER = b"ECCT"   # trailer magic (for header recovery)
 
-VERSION = 2
+VERSION = 3
 
 ALG_AES_GCM = 1
 KDF_ARGON2ID = 1
@@ -65,6 +65,7 @@ HDR_FLAG_PWCHK = 0x01
 HDR_FLAG_COMPRESS_ZLIB = 0x02
 HDR_FLAG_COMPRESS_ZSTD = 0x04 # Reserved / Example
 HDR_FLAG_COMPRESS_LZMA = 0x08
+HDR_FLAG_HAS_FILENAME = 0x10
 
 ENABLE_PWCHK_RECORD = True
 PWCHK_MAGIC = b"PWCK"

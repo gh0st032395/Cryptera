@@ -146,21 +146,27 @@ def _safe_tar_extract(tar: tarfile.TarFile, out_dir: str, progress_cb=None):
         if not is_inside:
             raise Exception(f"Malicious path detected (ZipSlip): {member.name}")
             
-        # 2. Symlink/Hardlink Check - ENHANCED
-        if member.issym() or member.islnk():
-            # Block both symbolic links AND hard links for security
-            print(f"Skipping link {member.name} -> {member.linkname} (security)")
-            continue
-        
-        # 3. Special File Check - NEW
-        if not (member.isfile() or member.isdir()):
-            # Skip device files, FIFOs, etc.
-            print(f"Skipping special file {member.name} (type: {member.type})")
+        # 2. Secure Extraction Logic
+        if member.isfile():
+            # Manual extraction with strict permissions (0o600)
+            os.makedirs(os.path.dirname(abs_target), exist_ok=True)
+            try:
+                fileobj = tar.extractfile(member)
+                if fileobj:
+                    # Open with 0o600 permissions
+                    fd = os.open(abs_target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                    with os.fdopen(fd, 'wb') as f_out:
+                        import shutil
+                        shutil.copyfileobj(fileobj, f_out)
+                    fileobj.close()
+            except Exception as e:
+                raise Exception(f"Failed to extract {member.name}: {str(e)}")
+        elif member.isdir():
+            os.makedirs(abs_target, exist_ok=True)
+        else:
+            # Skip symlinks, hardlinks, devices, pipes etc.
             continue
 
-        # 4. Extract
-        tar.extract(member, out_dir)
-        
         if progress_cb and i % 5 == 0:
             progress_cb(i, total)
             
@@ -492,17 +498,24 @@ class CryptoApp(ctk.CTk):
                 comp_str = ", ".join(comp_flags) if comp_flags else "None"
                 
                 # Calculate file size and overhead
-                file_size_mb = params['file_size'] / (1024 * 1024)
+                plain_size_mb = params['plain_size'] / (1024 * 1024)
+                stored_size_mb = params['stored_size'] / (1024 * 1024)
+                
                 block_size = params['k'] * params['shard_size']
-                num_blocks = (params['file_size'] + block_size - 1) // block_size if params['file_size'] > 0 else 0
+                num_blocks = (params['stored_size'] + block_size - 1) // block_size if params['stored_size'] > 0 else 0
                 overhead_pct = (params['r'] / params['k']) * 100
                 
-                info = f"""Version:     {params['version']}
-File Size:   {file_size_mb:.2f} MB ({num_blocks} blocks)
-Integrity:   k={params['k']}, r={params['r']}, shard={params['shard_size']//1024}KB (Overhead: {overhead_pct:.0f}%)
-Security:    Argon2id (t={params['argon2_time']}, m={params['argon2_mem_kib']//1024}MB, p={params['argon2_par']})
-Compression: {comp_str}
-Filename:    {params.get('filename', '(Hidden)')}"""
+                fname_disp = params.get('filename')
+                if not fname_disp or (params['flags'] & HDR_FLAG_HAS_FILENAME == 0):
+                    fname_disp = "(Hidden)"
+
+                info = f"""Format Version: {params['version']}
+Plain Size:     {plain_size_mb:.2f} MB
+Stored Size:    {stored_size_mb:.2f} MB ({num_blocks} blocks)
+Integrity:      k={params['k']}, r={params['r']}, shard={params['shard_size']//1024}KB (Overhead: {overhead_pct:.0f}%)
+Security:       Argon2id (t={params['argon2_time']}, m={params['argon2_mem_kib']//1024}MB, p={params['argon2_par']})
+Compression:    {comp_str}
+Filename:       {fname_disp}"""
                 
                 self.info_text.configure(state="normal")
                 self.info_text.delete("1.0", "end")

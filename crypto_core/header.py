@@ -8,33 +8,40 @@ def _nonce12(nonce_base: int, block_index: int, shard_index: int) -> bytes:
     return struct.pack(">III", nonce_base, block_index, shard_index)
 
 
-def _build_header(file_size: int, salt: bytes, nonce_base: int,
+def _build_header(plain_size: int, stored_size: int, salt: bytes, nonce_base: int,
                   shard_size: int, k: int, r: int, flags: int,
                   t: int, m: int, p: int, filename: str = "") -> bytes:
     # Header bytes (excluding MAGIC and header_len):
     # version u8, alg u8, kdf u8, crc u8
     # salt_len u8, salt
     # nonce_base u32
-    # file_size u64
+    # plain_size u64
+    # stored_size u64 (V3+)
     # shard_size u32
     # k u16, r u16
     # argon2 time u32, mem_kib u32, par u16
     # tag_len u8, flags u8
-    # V2+: filename_len u16, filename_bytes [...]
+    # V2/V3 (with flag): filename_len u16, filename_bytes [...]
     
     parts = [
         struct.pack(">BBBB", VERSION, ALG_AES_GCM, KDF_ARGON2ID, CRC_CRC32),
         struct.pack(">B", len(salt)),
         salt,
         struct.pack(">I", nonce_base),
-        struct.pack(">Q", file_size),
+        struct.pack(">Q", plain_size),
+    ]
+
+    if VERSION >= 3:
+        parts.append(struct.pack(">Q", stored_size))
+
+    parts.extend([
         struct.pack(">I", shard_size),
         struct.pack(">HH", k, r),
         struct.pack(">IIH", t, m, p),
         struct.pack(">BB", TAG_LEN, flags & 0xFF),
-    ]
+    ])
 
-    if VERSION >= 2:
+    if flags & HDR_FLAG_HAS_FILENAME:
         fname_bytes = filename.encode("utf-8") if filename else b""
         parts.append(struct.pack(">H", len(fname_bytes)))
         parts.append(fname_bytes)
@@ -42,14 +49,14 @@ def _build_header(file_size: int, salt: bytes, nonce_base: int,
     return b"".join(parts)
 
 
-def _pack_header(file_size: int, k: int, r: int, shard_size: int, flags: int,
-                 t: int, m: int, p: int, filename: str = ""):
+def _pack_header(plain_size: int, stored_size: int, k: int, r: int, shard_size: int, 
+                 flags: int, t: int, m: int, p: int, filename: str = ""):
     salt = get_random_bytes(16)
     nonce_base = struct.unpack(">I", get_random_bytes(4))[0]
 
     # Flags are passed in, no need to force them here.
     
-    hdr = _build_header(file_size, salt, nonce_base, shard_size, k, r, flags, t, m, p, filename)
+    hdr = _build_header(plain_size, stored_size, salt, nonce_base, shard_size, k, r, flags, t, m, p, filename)
     hdr_len = len(hdr)
     if hdr_len == 0 or hdr_len > MAX_HEADER_LEN:
         raise ValueError("Header length out of bounds")
@@ -77,8 +84,15 @@ def _parse_header(hdr: bytes):
     nonce_base = struct.unpack_from(">I", hdr, off)[0]
     off += 4
 
-    file_size = struct.unpack_from(">Q", hdr, off)[0]
+    plain_size = struct.unpack_from(">Q", hdr, off)[0]
     off += 8
+
+    if version >= 3:
+        stored_size = struct.unpack_from(">Q", hdr, off)[0]
+        off += 8
+    else:
+        # V1/V2: stored_size is the same as plain_size
+        stored_size = plain_size
 
     shard_size = struct.unpack_from(">I", hdr, off)[0]
     off += 4
@@ -93,7 +107,15 @@ def _parse_header(hdr: bytes):
     off += 2
     
     filename = ""
-    if version >= 2:
+    # V3 uses flag. V2 always had it if bytes remained.
+    had_filename = False
+    if version >= 3:
+        if flags & HDR_FLAG_HAS_FILENAME:
+            had_filename = True
+    elif version == 2:
+        had_filename = True # Try to read if v2
+
+    if had_filename:
         # Check if we have bytes left for filename len
         if off + 2 <= len(hdr):
             fname_len = struct.unpack_from(">H", hdr, off)[0]
@@ -112,7 +134,9 @@ def _parse_header(hdr: bytes):
         "crc_type": crc_type,
         "salt": salt,
         "nonce_base": nonce_base,
-        "file_size": file_size,
+        "plain_size": plain_size,
+        "stored_size": stored_size,
+        "file_size": stored_size, # Backward compat for loop calculations
         "shard_size": shard_size,
         "k": k,
         "r": r,

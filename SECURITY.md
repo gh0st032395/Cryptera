@@ -103,12 +103,26 @@ nonce (96 bits total) = nonce_base (32 bits) || block_index (32 bits) || shard_i
 
 | Field | Purpose | Privacy Impact |
 |-------|---------|----------------|
-| Version | File format version | None |
+| Version | File format version (V3+) | None |
 | Encryption params | k, r, shard_size | Reveals integrity profile choice |
 | KDF params | Argon2 t/m/p | Reveals security profile choice |
-| File size | Original plaintext size | **Reveals file size** |
+| Plain size (V3) | Original plaintext size (pre-comp) | **Reveals original size** |
+| Stored size (V3) | Compressed size (post-comp) | Reveals compression efficiency |
 | Compression flag | zlib/lzma/none | Reveals compression choice |
-| Filename (V2) | Original filename | **Optional - can be hidden** |
+| Filename (V2+) | Original filename | **Optional (Flag-based in V3)** |
+
+### Evolution Strategy
+
+1. **Versioning**:
+   - **Version 3 (Current)**: Supports dual size fields and flag-based metadata.
+   - **Major changes** (e.g. new algorithms, header layout change) increment VERSION.
+2. **Extensions (Future)**:
+   - For optional metadata, use the area after the primary fields.
+   - Prefer adding flags to `flags` byte before blindly appending data.
+   - Readers should check VERSION; V3 readers can fall back to reading V1/V2 by assuming `plain_size == stored_size`.
+
+### DoS Protection (V3+)
+- **Decompression Limit**: Encrypted files now store `Plain Size`. The decompressor strictly enforces this limit to prevent "Decompression Bomb" attacks. Decrypt builds will fail if they attempt to write more than the expected plaintext size.
 
 **Mitigation:**
 - Use "Hide original filename" checkbox for privacy
@@ -213,13 +227,15 @@ If you suspect a security vulnerability:
 
 ## Changelog
 
-### V2 (Current)
-- Added optional filename metadata
-- Enhanced TAR security (hardlink/special file filtering)
-- Improved error messages (TRUNCATED detection)
-- Default FEC Medium (24/8) instead of High (12/12)
+### V3 (Current)
+- Dual size tracking (Plain vs Stored) for accurate compression handling.
+- Enforcement of decompression limits (anti-DoS).
+- Enhanced privacy: explicit flag for filename metadata.
+- Secure TAR extraction (manual walk, strict permissions).
+- Integrated CLI tool.
 
-### V1 (Legacy)
+### V2 (Legacy)
+- Added optional filename metadata
 - Initial implementation
 - AES-256-GCM + Argon2id + Reed-Solomon
 - Header redundancy

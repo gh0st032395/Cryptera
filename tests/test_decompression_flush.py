@@ -6,7 +6,7 @@ import pytest
 # Add parent dir to path so we can import crypto_core
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from crypto_core import encrypt_file, decrypt_file
+from crypto_core import encrypt_file, decrypt_file, decrypt_file_ex
 
 def test_decompress_flush_regression(tmp_path):
     # Create a dummy file with specific size to stress chunking
@@ -30,7 +30,9 @@ def test_decompress_flush_regression(tmp_path):
     )
     
     # Decrypt
-    assert decrypt_file(str(enc_file), str(dec_file), password) is True
+    ok, code, msg, _ = decrypt_file_ex(str(enc_file), str(dec_file), password)
+    if not ok: print(f"ZLIB FAIL: {code} - {msg}")
+    assert ok is True
     
     # Verify
     decrypted_data = dec_file.read_bytes()
@@ -48,7 +50,9 @@ def test_decompress_flush_regression(tmp_path):
     )
     
     # Decrypt
-    assert decrypt_file(str(enc_file), str(dec_file), password) is True
+    ok, code, msg, _ = decrypt_file_ex(str(enc_file), str(dec_file), password)
+    if not ok: print(f"LZMA FAIL: {code} - {msg}")
+    assert ok is True
     
     # Verify
     decrypted_data = dec_file.read_bytes()

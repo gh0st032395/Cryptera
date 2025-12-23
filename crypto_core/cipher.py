@@ -131,63 +131,87 @@ def _compression_stream(f_in, block_size: int, alg: str):
         out_buf += compressor.compress(chunk)
 
 
-def _decompression_stream(f_out, alg: str):
-    """
-    Returns an object with .write() that decompresses on the fly and writes to f_out.
-    """
-    class DecompressorWriter:
-        def __init__(self, target, algo):
-            self.target = target
-            if algo == "zlib":
-                self.dec = zlib.decompressobj() 
-            elif algo == "lzma":
-                self.dec = lzma.LZMADecompressor()
-            else:
-                self.dec = None
+def _decompression_stream(target, algorithm, limit=None):
+    if not algorithm:
+        class FakeWriter:
+            def __init__(self, t): 
+                self.t = t
+                self.written = 0
+            def write(self, data):
+                if limit and self.written + len(data) > limit:
+                    raise DecryptError("DECOMPRESSION_BOMB", 
+                                       f"Output size limit exceeded ({limit} bytes)")
+                self.t.write(data)
+                self.written += len(data)
+            def close(self): 
+                self.t.flush()
+        return FakeWriter(target)
 
-        def write(self, b):
-            if self.dec:
-                # Decompress as much as possible. 
-                # Note: if max_length was used, we'd need a loop here, but we don't.
-                # However, being robust doesn't hurt.
-                data = self.dec.decompress(b)
-                if data:
-                    self.target.write(data)
-                
-                # Check for unconsumed tail (though unlikely without max_length)
-                while hasattr(self.dec, 'unconsumed_tail') and self.dec.unconsumed_tail:
-                    tail = self.dec.unconsumed_tail
-                    data = self.dec.decompress(tail)
-                    if data:
-                        self.target.write(data)
-                    else:
-                        break
-            else:
-                self.target.write(b)
-        
+    if algorithm == "zlib":
+        dec = zlib.decompressobj()
+    elif algorithm == "lzma":
+        dec = lzma.LZMADecompressor()
+    else:
+        raise ValueError("Unsupported decompressor")
+
+    class DecompressorWriter:
+        def __init__(self, t, d):
+            self.target = t
+            self.dec = d
+            self.written = 0
+
+        def write(self, data):
+            # Process incoming data
+            res = self.dec.decompress(data)
+            if res:
+                if limit and self.written + len(res) > limit:
+                     raise DecryptError("DECOMPRESSION_BOMB", 
+                                        f"Output size limit exceeded ({limit} bytes)")
+                self.target.write(res)
+                self.written += len(res)
+
+            # Handle unconsumed data if any (standard for zlib/lzma objects)
+            while hasattr(self.dec, 'unconsumed_tail') and self.dec.unconsumed_tail:
+                res = self.dec.decompress(self.dec.unconsumed_tail)
+                if res:
+                    if limit and self.written + len(res) > limit:
+                         raise DecryptError("DECOMPRESSION_BOMB", 
+                                           f"Output size limit exceeded ({limit} bytes)")
+                    self.target.write(res)
+                    self.written += len(res)
+
         def close(self):
-            if self.dec:
-                # Some decompressors might have residues if not fully finished
-                # We call decompress with empty bytes to signal EOF if supported by the object style
-                try:
-                    # zlib/lzma decompressors in Python don't strictly have a flush() 
-                    # but we can check if they are finished.
-                    if hasattr(self.dec, 'unconsumed_tail') and self.dec.unconsumed_tail:
-                        while self.dec.unconsumed_tail:
-                            data = self.dec.decompress(self.dec.unconsumed_tail)
-                            if data:
-                                self.target.write(data)
-                            else:
-                                break
-                                
-                except Exception:
-                    pass
-            # We don't close self.target here because it's usually managed by a 'with' block outside
-            # but we ensure it is flushed.
-            if hasattr(self.target, 'flush'):
-                self.target.flush()
+            # Final flush
+            res = b""
+            try:
+                if algorithm == "zlib":
+                    res = self.dec.decompress(b"", zlib.Z_FINISH)
+                elif algorithm == "lzma":
+                    if not self.dec.eof:
+                        res = self.dec.decompress(b"")
+            except Exception:
+                pass
+                
+            if res:
+                if limit and self.written + len(res) > limit:
+                     raise DecryptError("DECOMPRESSION_BOMB", 
+                                       f"Output size limit exceeded ({limit} bytes)")
+                self.target.write(res)
+                self.written += len(res)
             
-    return DecompressorWriter(f_out, alg)
+            # Additional flush if zlib
+            if hasattr(self.dec, 'flush'):
+                res = self.dec.flush()
+                if res:
+                    if limit and self.written + len(res) > limit:
+                         raise DecryptError("DECOMPRESSION_BOMB", 
+                                           f"Output size limit exceeded ({limit} bytes)")
+                    self.target.write(res)
+                    self.written += len(res)
+
+            self.target.flush()
+
+    return DecompressorWriter(target, dec)
 
 
 # =========================
@@ -213,23 +237,36 @@ def encrypt_file(input_file: str, output_file: str, password: str,
     argon2_m = argon2_m or ARGON2_MEM_KIB
     argon2_p = argon2_p or ARGON2_PAR
     
-    filename_meta = os.path.basename(original_filename) if original_filename else os.path.basename(input_file)
-    
-    # Phase 1: Compression (Optional)
-    processing_file = input_file
-    temp_compressed = None
-    
     flags = 0
     if enable_pwchk and ENABLE_PWCHK_RECORD:
         flags |= HDR_FLAG_PWCHK
         
+    # Phase 1: Preparation (compression)
+    plain_size = os.path.getsize(input_file)
+    temp_compressed = None
+    processing_file = input_file
+
+    comp_flag = 0
+    if compress_alg == "zlib":
+        comp_flag = HDR_FLAG_COMPRESS_ZLIB
+    elif compress_alg == "lzma":
+        comp_flag = HDR_FLAG_COMPRESS_LZMA
+
+    flags |= comp_flag
+
+    # Handle filename privacy
+    if original_filename is None:
+        filename_meta = os.path.basename(input_file)
+        flags |= HDR_FLAG_HAS_FILENAME
+    elif original_filename == "":
+        filename_meta = ""
+        # flag NOT set -> hidden
+    else:
+        filename_meta = original_filename
+        flags |= HDR_FLAG_HAS_FILENAME
+
     try:
         if compress_alg:
-            if compress_alg == "zlib":
-                flags |= HDR_FLAG_COMPRESS_ZLIB
-            elif compress_alg == "lzma":
-                flags |= HDR_FLAG_COMPRESS_LZMA
-            
             # Create a temp file for the compressed data
             out_dir = os.path.dirname(os.path.abspath(output_file)) or "."
             fd, temp_compressed = tempfile.mkstemp(prefix="comp_", dir=out_dir)
@@ -250,16 +287,17 @@ def encrypt_file(input_file: str, output_file: str, password: str,
             processing_file = temp_compressed
         
         # Phase 2: Encryption
-        file_size = os.path.getsize(processing_file)
+        stored_size = os.path.getsize(processing_file)
         
         m = k + r
         block_size = k * shard_size
 
-        num_blocks = math.ceil(file_size / block_size) if file_size else 1
+        num_blocks = math.ceil(stored_size / block_size) if stored_size else 1
 
-        # Header with REAL size
+        # Header with REAL sizes
         start_header, trailer, prefix, hdr, hdr_len, hdr_crc, salt, nonce_base, flags = _pack_header(
-            file_size=file_size,
+            plain_size=plain_size,
+            stored_size=stored_size,
             k=k,
             r=r,
             shard_size=shard_size,
@@ -447,8 +485,10 @@ def decrypt_file_ex(input_file: str, output_file: str, password: str,
                 with tempfile.NamedTemporaryFile("wb", delete=False, dir=out_dir, prefix="tmp_dec_") as f_out:
                     tmp_name = f_out.name
                     
-                    # Wrap f_out with decompressor if needed
-                    writer = _decompression_stream(f_out, comp_alg)
+                    # Wrap f_out with decompressor if needed. 
+                    # Use plain_size as limit to prevent decompression bombs. No limit if V1/V2 and no metadata.
+                    limit = params.get("plain_size")
+                    writer = _decompression_stream(f_out, comp_alg, limit=limit)
 
                     f_in.seek(data_offset)
                     _progress(progress_cb, "decrypt", 0, num_blocks)
@@ -463,7 +503,13 @@ def decrypt_file_ex(input_file: str, output_file: str, password: str,
 
                         for shard_index in range(m):
                             crc_fields = f_in.read(4 * CRC_COPIES)
-                            if not crc_fields: break  # Normal end of blocks
+                            if not crc_fields:
+                                # If we are exactly at the end of the expected blocks, this is fine
+                                if block_index == num_blocks: # Should not happen in this loop range
+                                    break
+                                else:
+                                    raise TruncatedFileError(f"Unexpected EOF at block {block_index}, shard {shard_index} (expected {num_blocks} blocks)")
+                            
                             if len(crc_fields) != 4 * CRC_COPIES:
                                 raise TruncatedFileError(f"File truncated at CRC fields (block {block_index}, shard {shard_index})")
                             crc_vals = list(struct.unpack(">" + "I" * CRC_COPIES, crc_fields))
@@ -498,9 +544,9 @@ def decrypt_file_ex(input_file: str, output_file: str, password: str,
 
                         byte_data = data_block.tobytes()
                         
-                        # Handle padding
+                        # Handle padding using stored_size
                         if block_index == num_blocks - 1:
-                            valid_bytes = params["file_size"] - (block_index * block_size)
+                            valid_bytes = params["stored_size"] - (block_index * block_size)
                             writer.write(byte_data[:valid_bytes])
                         else:
                             writer.write(byte_data)
