@@ -77,7 +77,7 @@ class TestCryptoCore(unittest.TestCase):
         print(" -> OK")
 
     def test_compression_and_keyfile(self):
-        """Test compression (zlib) and Keyfile HMAC construction."""
+        """Test compression (zlib) and Keyfile HMAC-SHA256 construction."""
         print("\n[TEST] Compression + Keyfile")
         keyfile_data = b"my_secret_keyfile_content"
         
@@ -149,6 +149,59 @@ class TestCryptoCore(unittest.TestCase):
         ok, code, msg, meta = decrypt_file_ex(self.output_file, self.decrypted_file, self.password)
         self.assertFalse(ok, "Decryption succeeded with BOTH headers corrupted!")
         print(" -> Failure OK (Both corrupt -> Failed)")
+
+    def test_fec_thresholds(self):
+        """Test FEC recovery: <= r is OK, > r fails (AG-006)."""
+        print("\n[TEST] FEC Thresholds")
+        k, r = 24, 8
+        shard_size = 1024
+        encrypt_file(self.input_file, self.output_file, self.password, k=k, r=r, shard_size=shard_size)
+        
+        # Calculate offsets
+        # Header (6 + 37 + filename len) + PWCHK (Optional)
+        # Simplified: scan for magic
+        with open(self.output_file, "rb") as f:
+            ecf_data = bytearray(f.read())
+            
+        m = k + r
+        # Find start of block 0. It follows the start header and optional PWCHK.
+        # We know k=24, r=8, shard_size=1024.
+        # Header version 3 is roughly 52-60 bytes + filename.
+        # PWCHK is 52 + 16 bytes = 68 bytes.
+        
+        # Let's find first FEC block by looking for a pattern or just using the header length
+        params = _parse_header(_read_header_from_start(open(self.output_file, "rb"))[0])
+        header_len = _read_header_from_start(open(self.output_file, "rb"))[1]
+        data_offset = 4 + 2 + header_len + 4 # Magic + len + hdr + crc
+        if params['flags'] & HDR_FLAG_PWCHK:
+            data_offset += PWCHK_RECORD_SIZE
+            
+        shard_total_len = CRC_BLOCK_SIZE + shard_size + TAG_LEN # 4*CRC_COPIES + 1024 + 16
+        
+        # 1. Corrupt exactly r shards in block 0
+        tmp_ecf = self.output_file + ".tmp"
+        corrupted_data = bytearray(ecf_data)
+        for i in range(r):
+            pos = data_offset + (i * shard_total_len) + (4 * CRC_COPIES) # corrupt data start
+            corrupted_data[pos] ^= 0xFF 
+            
+        with open(tmp_ecf, "wb") as f:
+            f.write(corrupted_data)
+            
+        ok, code, msg, meta = decrypt_file_ex(tmp_ecf, self.decrypted_file, self.password)
+        self.assertTrue(ok, f"FEC failed to recover {r} shards: {msg}")
+        self.assertEqual(self.input_hash, self._get_hash(self.decrypted_file))
+        print(f" -> Recovered {r} shards OK")
+        
+        # 2. Corrupt r + 1 shards
+        corrupted_data[data_offset + (r * shard_total_len) + (4 * CRC_COPIES)] ^= 0xFF
+        with open(tmp_ecf, "wb") as f:
+            f.write(corrupted_data)
+            
+        ok, code, msg, meta = decrypt_file_ex(tmp_ecf, self.decrypted_file, self.password)
+        self.assertFalse(ok, "FEC should HAVE FAILED to recover r+1 shards")
+        self.assertEqual(code, "CORRUPT_BEYOND_FEC")
+        print(" -> Failure with r+1 shards OK")
 
 if __name__ == "__main__":
     unittest.main()

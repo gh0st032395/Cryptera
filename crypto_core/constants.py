@@ -30,6 +30,7 @@ ARGON2_PAR = 2
 
 # Per-shard CRC is duplicated twice (more robust to CRC field corruption)
 CRC_COPIES = 2
+CRC_BLOCK_SIZE = 4 * CRC_COPIES
 
 # Safety limits (header length)
 MAX_HEADER_LEN = 8192

@@ -30,6 +30,7 @@ ERROR_MAP = {
     "TRUNCATED": "File appears truncated/incomplete.",
     "PARAMS_OUT_OF_LIMITS": "Security parameters out of safe bounds.",
     "IO_ERROR": "Read/Write error.",
+    "DECOMPRESSION_BOMB": "Security alert: output size exceeds expected limit (Decompression Bomb protection).",
 }
 
 # -------------------------

@@ -29,9 +29,9 @@ CryptoV2 is a file encryption tool providing confidentiality, integrity, and cor
 
 ### Integrity: CRC32 + GCM Authentication
 
-- **Per-Shard CRC**: CRC32 with 2x redundancy for fast corruption detection
-- **GCM Tags**: 128-bit authentication tag per encrypted shard
-- **Header HMAC**: Authenticated data in GCM includes header metadata
+- **Per-Shard CRC**: CRC32 with 2x redundancy for fast hardware-friendly corruption detection.
+- **GCM Tags**: 128-bit authentication tag per encrypted shard.
+- **Header Authentication**: Header metadata is included as **AAD** (Associated Authenticated Data) in every GCM operation, ensuring its integrity without a separate HMAC.
 
 ### Error Correction: Reed-Solomon (GF(256))
 
@@ -61,7 +61,8 @@ CryptoV2 is a file encryption tool providing confidentiality, integrity, and cor
 - **KDF Strength**: Argon2id work factor configurable (default: 3 iterations, 64MB RAM)
 - **Salt Uniqueness**: Random 128-bit salt per file
 - **Dictionary Resistance**: Memory-hard function resists GPU/ASIC attacks
-- **Optional Keyfile**: HMAC-SHA256 combination of password + keyfile
+- **Optional Keyfile**: Two-factor protection combining password and keyfile.
+- **Keyfile Construction**: `HMAC-SHA256(key=SHA256(keyfile), msg=password)`. This prevents entropy loss and ensures even huge keyfiles are processed safely (via streaming hash).
 
 ### ✅ Corruption Resistance
 
@@ -89,7 +90,9 @@ nonce (96 bits total) = nonce_base (32 bits) || block_index (32 bits) || shard_i
 
 - Each file has unique random `nonce_base` (2^32 space)
 - Each (key, nonce) pair used exactly once per file
-- Maximum file size: 2^32 blocks × block_size ≈ 281 TB @ default settings
+- **Maximum file size**: ~1.5 PiB (1536 TiB)
+    - Calculated as: $2^{32}$ blocks × $(k \times shard\_size)$.
+    - With default $k=24$ and $shard\_size=16$ KiB, block size is 384 KiB.
 - **Guarantee**: No nonce reuse within a single file
 - **Guarantee**: Statistically negligible collision across files (different salts → different keys)
 

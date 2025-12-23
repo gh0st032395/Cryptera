@@ -9,7 +9,10 @@ _LOG = None
 _INV = None
 _MUL = None
 
+import threading
+
 _G_CACHE = {}  # cache generator matrices by (k,r)
+_G_LOCK = threading.Lock()
 
 
 def _gf256_init_tables():
@@ -206,9 +209,10 @@ def _build_generator_matrix(k: int, r: int) -> np.ndarray:
 
 def _get_G(k: int, r: int) -> np.ndarray:
     key = (k, r)
-    if key not in _G_CACHE:
-        _G_CACHE[key] = _build_generator_matrix(k, r)
-    return _G_CACHE[key]
+    with _G_LOCK:
+        if key not in _G_CACHE:
+            _G_CACHE[key] = _build_generator_matrix(k, r)
+        return _G_CACHE[key]
 
 
 def _fec_encode(data_shards: np.ndarray, G: np.ndarray, k: int, r: int) -> np.ndarray:

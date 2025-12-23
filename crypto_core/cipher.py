@@ -62,16 +62,23 @@ def _validate_limits(*,
 
 import hmac
 
-def _derive_key(password: str, salt: bytes, t: int, mem_kib: int, par: int, keyfile: bytes = None) -> bytes:
+def _derive_key(password: str, salt: bytes, t: int, mem_kib: int, par: int, 
+                keyfile: bytes = None, keyfile_hash: bytes = None) -> bytes:
     if not isinstance(password, str) or not password:
-        raise ValueError("Password non valida (vuota o non stringa).")
+        raise ValueError("Password invalid (empty or not a string).")
 
     secret = password.encode("utf-8")
-    if keyfile:
-        # Robust construction: HMAC-SHA256(key=hash(keyfile), msg=password)
-        # We first hash the keyfile to get a fixed-size key
-        kf_key = hashlib.sha256(keyfile).digest()
-        secret = hmac.new(kf_key, secret, hashlib.sha256).digest()
+    
+    # Keyfile construction (AG-001/AG-002): HMAC-SHA256(key=SHA256(keyfile), msg=password)
+    # Allows passing either raw 'keyfile' (bytes) or pre-calculated 'keyfile_hash' (32 bytes).
+    effective_kf_hash = None
+    if keyfile_hash:
+        effective_kf_hash = keyfile_hash
+    elif keyfile:
+        effective_kf_hash = hashlib.sha256(keyfile).digest()
+
+    if effective_kf_hash:
+        secret = hmac.new(effective_kf_hash, secret, hashlib.sha256).digest()
 
     return hash_secret_raw(
         secret=secret,
@@ -227,7 +234,8 @@ def encrypt_file(input_file: str, output_file: str, password: str,
                  argon2_t: int = None, argon2_m: int = None, argon2_p: int = None,
                  control_event: threading.Event = None,
                  progress_cb: Optional[ProgressCallback] = None,
-                 original_filename: str = None) -> None:
+                 original_filename: str = None,
+                 keyfile_hash: bytes = None) -> None:
     
     # Defaults
     k = k or K_DATA
@@ -313,7 +321,8 @@ def encrypt_file(input_file: str, output_file: str, password: str,
         )
 
         G = _get_G(k, r)
-        key = _derive_key(password, salt, argon2_t, argon2_m, argon2_p, keyfile)
+        key = _derive_key(password, salt, argon2_t, argon2_m, argon2_p, 
+                          keyfile=keyfile, keyfile_hash=keyfile_hash)
 
         out_dir = os.path.dirname(os.path.abspath(output_file)) or "."
         tmp_name = None
@@ -384,7 +393,8 @@ def encrypt_file(input_file: str, output_file: str, password: str,
 def decrypt_file_ex(input_file: str, output_file: str, password: str,
                     keyfile: bytes = None,
                     control_event: threading.Event = None,
-                    progress_cb: Optional[ProgressCallback] = None) -> Tuple[bool, str, str, dict]:
+                    progress_cb: Optional[ProgressCallback] = None,
+                    keyfile_hash: bytes = None) -> Tuple[bool, str, str, dict]:
     
     global LAST_DECRYPT_STATUS, LAST_DECRYPT_MESSAGE
     LAST_DECRYPT_STATUS, LAST_DECRYPT_MESSAGE = DECRYPT_OK, ""
@@ -425,6 +435,7 @@ def decrypt_file_ex(input_file: str, output_file: str, password: str,
             shard_size = params["shard_size"]
             m = k + r
             block_size = k * shard_size
+            tag_len = params.get("tag_len", TAG_LEN)
             
             # Check compression flags
             comp_alg = None
@@ -453,7 +464,8 @@ def decrypt_file_ex(input_file: str, output_file: str, password: str,
                 t=params["argon2_time"],
                 mem_kib=params["argon2_mem_kib"],
                 par=params["argon2_par"],
-                keyfile=keyfile
+                keyfile=keyfile,
+                keyfile_hash=keyfile_hash
             )
             
             # PW Check Block
@@ -502,23 +514,17 @@ def decrypt_file_ex(input_file: str, output_file: str, password: str,
                         present = [False] * m
 
                         for shard_index in range(m):
-                            crc_fields = f_in.read(4 * CRC_COPIES)
-                            if not crc_fields:
-                                # If we are exactly at the end of the expected blocks, this is fine
-                                if block_index == num_blocks: # Should not happen in this loop range
-                                    break
-                                else:
-                                    raise TruncatedFileError(f"Unexpected EOF at block {block_index}, shard {shard_index} (expected {num_blocks} blocks)")
+                            crc_fields = f_in.read(CRC_BLOCK_SIZE)
+                            if len(crc_fields) < CRC_BLOCK_SIZE:
+                                raise TruncatedFileError(f"Unexpected EOF reading shard {shard_index} CRC in block {block_index}.")
                             
-                            if len(crc_fields) != 4 * CRC_COPIES:
-                                raise TruncatedFileError(f"File truncated at CRC fields (block {block_index}, shard {shard_index})")
                             crc_vals = list(struct.unpack(">" + "I" * CRC_COPIES, crc_fields))
                             
                             ct = f_in.read(shard_size)
-                            if len(ct) != shard_size:
+                            if len(ct) < shard_size:
                                 raise TruncatedFileError(f"File truncated at shard data (block {block_index}, shard {shard_index})")
-                            tag = f_in.read(TAG_LEN)
-                            if len(tag) != TAG_LEN:
+                            tag = f_in.read(tag_len)
+                            if len(tag) < tag_len:
                                 raise TruncatedFileError(f"File truncated at authentication tag (block {block_index}, shard {shard_index})")
                             
                             crc_calc = zlib.crc32(ct + tag) & 0xFFFFFFFF
@@ -570,6 +576,6 @@ def decrypt_file_ex(input_file: str, output_file: str, password: str,
     return True, DECRYPT_OK, "OK", metadata
 
 
-def decrypt_file(input_file: str, output_file: str, password: str, progress_cb=None):
-    ok, _, _, _ = decrypt_file_ex(input_file, output_file, password, progress_cb=progress_cb)
+def decrypt_file(input_file: str, output_file: str, password: str, progress_cb=None, keyfile_hash: bytes = None):
+    ok, _, _, _ = decrypt_file_ex(input_file, output_file, password, progress_cb=progress_cb, keyfile_hash=keyfile_hash)
     return ok

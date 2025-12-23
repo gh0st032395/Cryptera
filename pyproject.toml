@@ -16,3 +16,19 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = "crypto_core.*"
 disallow_untyped_defs = true # Core should be typed
+
+[project]
+name = "cryptov2"
+version = "3.0.0"
+description = "Secure File Encryptor/Decryptor with ECC and AEAD"
+dependencies = [
+    "pycryptodome",
+    "argon2-cffi",
+    "numpy",
+    "customtkinter",
+    "pathvalidate"
+]
+requires-python = ">=3.10"
+
+[project.scripts]
+crypto = "crypto_core.cli:main"
