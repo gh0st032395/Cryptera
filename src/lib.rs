@@ -1,4 +1,6 @@
 
+#![allow(deprecated)]
+
 use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Nonce};
 use argon2::{Algorithm, Argon2, Params, Version};
@@ -16,6 +18,11 @@ use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::io::{self, BufReader, BufWriter, Read, Seek, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+use std::time::Duration;
 use tempfile::NamedTempFile;
 use xz2::write::XzDecoder;
 
@@ -333,6 +340,37 @@ fn meta_from_params(params: &HeaderParams) -> MetaInfo {
     }
 }
 
+pub struct ControlFlags {
+    pub cancel: Arc<AtomicBool>,
+    pub pause: Arc<AtomicBool>,
+}
+
+fn control_wait(control: Option<&ControlFlags>) -> Result<(), CoreError> {
+    if let Some(ctrl) = control {
+        if ctrl.cancel.load(Ordering::SeqCst) {
+            return Err(CoreError::new(DECRYPT_CANCELLED, "Operation cancelled."));
+        }
+        while ctrl.pause.load(Ordering::SeqCst) {
+            if ctrl.cancel.load(Ordering::SeqCst) {
+                return Err(CoreError::new(DECRYPT_CANCELLED, "Operation cancelled."));
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+    Ok(())
+}
+
+fn progress_report(
+    progress: &mut Option<&mut dyn FnMut(&str, u64, u64)>,
+    stage: &str,
+    done: u64,
+    total: u64,
+) {
+    if let Some(cb) = progress.as_mut() {
+        cb(stage, done, total);
+    }
+}
+
 fn parse_header(hdr: &[u8]) -> Result<HeaderParams, CoreError> {
     let mut rdr = io::Cursor::new(hdr);
     let version = rdr.read_u8().map_err(|_| {
@@ -497,8 +535,6 @@ fn read_header_from_end(mut f: &File) -> io::Result<Option<(Vec<u8>, u16, u32)>>
     Ok(Some((hdr, hdr_len, hdr_crc)))
 }
 struct GfTables {
-    exp: [u8; 512],
-    log: [i16; 256],
     inv: [u8; 256],
     mul: [[u8; 256]; 256],
 }
@@ -536,7 +572,7 @@ fn gf_tables() -> &'static GfTables {
                 mul[a][b] = exp[idx as usize];
             }
         }
-        GfTables { exp, log, inv, mul }
+        GfTables { inv, mul }
     })
 }
 
@@ -737,7 +773,7 @@ fn progress_call(
     Ok(())
 }
 
-fn write_crc_copies(mut w: &mut dyn Write, data: &[u8]) -> io::Result<()> {
+fn write_crc_copies(w: &mut dyn Write, data: &[u8]) -> io::Result<()> {
     let crc = crc32_bytes(data);
     for _ in 0..CRC_COPIES {
         w.write_u32::<BigEndian>(crc)?;
@@ -761,7 +797,7 @@ pub fn read_metadata_rs(path: &str) -> Result<MetaInfo, CoreError> {
     Ok(meta_from_params(&params))
 }
 
-pub fn encrypt_file_rs(
+pub fn encrypt_file_rs_controlled(
     input_file: &str,
     output_file: &str,
     password: &str,
@@ -776,6 +812,8 @@ pub fn encrypt_file_rs(
     argon2_p: Option<u16>,
     original_filename: Option<&str>,
     is_tar_container: bool,
+    control: Option<&ControlFlags>,
+    mut progress: Option<&mut dyn FnMut(&str, u64, u64)>,
 ) -> Result<(), CoreError> {
     let k = k.unwrap_or(K_DATA);
     let r = r.unwrap_or(R_PARITY);
@@ -846,6 +884,7 @@ pub fn encrypt_file_rs(
             let mut enc = ZlibEncoder::new(f_out, Compression::new(6));
             let mut buf = [0u8; 64 * 1024];
             loop {
+                control_wait(control)?;
                 let n = f_in
                     .read(&mut buf)
                     .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
@@ -861,6 +900,7 @@ pub fn encrypt_file_rs(
             let mut enc = xz2::write::XzEncoder::new(f_out, 6);
             let mut buf = [0u8; 64 * 1024];
             loop {
+                control_wait(control)?;
                 let n = f_in
                     .read(&mut buf)
                     .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
@@ -963,6 +1003,8 @@ pub fn encrypt_file_rs(
     let mut block_buf = vec![0u8; block_size_usize];
 
     for block_index in 0..num_blocks {
+        control_wait(control)?;
+        progress_report(&mut progress, "encrypt", block_index, num_blocks);
         let mut read_total = 0usize;
         while read_total < block_size_usize {
             let n = f_in
@@ -1017,6 +1059,8 @@ pub fn encrypt_file_rs(
         }
     }
 
+    progress_report(&mut progress, "encrypt", num_blocks, num_blocks);
+
     f_out
         .write_all(&trailer)
         .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
@@ -1030,14 +1074,68 @@ pub fn encrypt_file_rs(
     Ok(())
 }
 
+pub fn encrypt_file_rs(
+    input_file: &str,
+    output_file: &str,
+    password: &str,
+    keyfile_hash: Option<&[u8]>,
+    compress_alg: Option<&str>,
+    enable_pwchk: bool,
+    k: Option<u16>,
+    r: Option<u16>,
+    shard_size: Option<u32>,
+    argon2_t: Option<u32>,
+    argon2_m: Option<u32>,
+    argon2_p: Option<u16>,
+    original_filename: Option<&str>,
+    is_tar_container: bool,
+) -> Result<(), CoreError> {
+    encrypt_file_rs_controlled(
+        input_file,
+        output_file,
+        password,
+        keyfile_hash,
+        compress_alg,
+        enable_pwchk,
+        k,
+        r,
+        shard_size,
+        argon2_t,
+        argon2_m,
+        argon2_p,
+        original_filename,
+        is_tar_container,
+        None,
+        None,
+    )
+}
+
+pub fn decrypt_file_ex_rs_controlled(
+    input_file: &str,
+    output_file: &str,
+    password: &str,
+    keyfile_hash: Option<&[u8]>,
+    control: Option<&ControlFlags>,
+    mut progress: Option<&mut dyn FnMut(&str, u64, u64)>,
+) -> Result<MetaInfo, CoreError> {
+    let params = decrypt_internal_rs_controlled(
+        input_file,
+        output_file,
+        password,
+        keyfile_hash,
+        control,
+        progress,
+    )?;
+    Ok(meta_from_params(&params))
+}
+
 pub fn decrypt_file_ex_rs(
     input_file: &str,
     output_file: &str,
     password: &str,
     keyfile_hash: Option<&[u8]>,
 ) -> Result<MetaInfo, CoreError> {
-    let params = decrypt_internal_rs(input_file, output_file, password, keyfile_hash)?;
-    Ok(meta_from_params(&params))
+    decrypt_file_ex_rs_controlled(input_file, output_file, password, keyfile_hash, None, None)
 }
 
 pub fn verify_file_integrity_rs(
@@ -1045,7 +1143,24 @@ pub fn verify_file_integrity_rs(
     password: &str,
     keyfile_hash: Option<&[u8]>,
 ) -> Result<MetaInfo, CoreError> {
-    let params = verify_internal_rs(input_file, password, keyfile_hash)?;
+    let params = verify_internal_rs_controlled(input_file, password, keyfile_hash, None, None)?;
+    Ok(meta_from_params(&params))
+}
+
+pub fn verify_file_integrity_rs_controlled(
+    input_file: &str,
+    password: &str,
+    keyfile_hash: Option<&[u8]>,
+    control: Option<&ControlFlags>,
+    mut progress: Option<&mut dyn FnMut(&str, u64, u64)>,
+) -> Result<MetaInfo, CoreError> {
+    let params = verify_internal_rs_controlled(
+        input_file,
+        password,
+        keyfile_hash,
+        control,
+        progress,
+    )?;
     Ok(meta_from_params(&params))
 }
 
@@ -1500,11 +1615,13 @@ fn decrypt_internal(
     Ok(params)
 }
 
-fn decrypt_internal_rs(
+fn decrypt_internal_rs_controlled(
     input_file: &str,
     output_file: &str,
     password: &str,
     keyfile_hash: Option<&[u8]>,
+    control: Option<&ControlFlags>,
+    mut progress: Option<&mut dyn FnMut(&str, u64, u64)>,
 ) -> Result<HeaderParams, CoreError> {
     let (params, hdr, hdr_len) = open_header(input_file)?;
     if params.version > VERSION_U8 {
@@ -1558,6 +1675,7 @@ fn decrypt_internal_rs(
     let mut f_in =
         BufReader::new(File::open(input_file).map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?);
     if pwchk_present {
+        control_wait(control)?;
         f_in.seek(io::SeekFrom::Start(data_offset))
             .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
         let mut blob = vec![0u8; PWCHK_RECORD_SIZE];
@@ -1608,6 +1726,8 @@ fn decrypt_internal_rs(
     let shard_size = params.shard_size as usize;
 
     for block_index in 0..num_blocks {
+        control_wait(control)?;
+        progress_report(&mut progress, "decrypt", block_index, num_blocks);
         let mut shards: Vec<Option<Vec<u8>>> = vec![None; m];
         let mut present = vec![false; m];
 
@@ -1674,6 +1794,7 @@ fn decrypt_internal_rs(
         }
     }
 
+    progress_report(&mut progress, "decrypt", num_blocks, num_blocks);
     writer
         .flush()
         .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
@@ -1683,10 +1804,12 @@ fn decrypt_internal_rs(
     Ok(params)
 }
 
-fn verify_internal_rs(
+fn verify_internal_rs_controlled(
     input_file: &str,
     password: &str,
     keyfile_hash: Option<&[u8]>,
+    control: Option<&ControlFlags>,
+    mut progress: Option<&mut dyn FnMut(&str, u64, u64)>,
 ) -> Result<HeaderParams, CoreError> {
     let (params, hdr, hdr_len) = open_header(input_file)?;
     if params.version > VERSION_U8 || params.version < 1 {
@@ -1735,6 +1858,7 @@ fn verify_internal_rs(
     let mut f_in =
         BufReader::new(File::open(input_file).map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?);
     if pwchk_present {
+        control_wait(control)?;
         f_in.seek(io::SeekFrom::Start(data_offset))
             .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
         let mut blob = vec![0u8; PWCHK_RECORD_SIZE];
@@ -1770,6 +1894,8 @@ fn verify_internal_rs(
     let shard_size = params.shard_size as usize;
 
     for block_index in 0..num_blocks {
+        control_wait(control)?;
+        progress_report(&mut progress, "verify", block_index, num_blocks);
         let mut shards: Vec<Option<Vec<u8>>> = vec![None; m];
         let mut present = vec![false; m];
 
@@ -1815,6 +1941,7 @@ fn verify_internal_rs(
             let _ = fec_decode(&shards, &present, &g, params.k as usize, params.r as usize)?;
         }
     }
+    progress_report(&mut progress, "verify", num_blocks, num_blocks);
     Ok(params)
 }
 
