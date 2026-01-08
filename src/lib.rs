@@ -81,13 +81,13 @@ const DECRYPT_UNKNOWN_ERROR: &str = "UNKNOWN_ERROR";
 type HmacSha256 = Hmac<Sha256>;
 
 #[derive(Debug)]
-struct CoreError {
-    code: &'static str,
-    message: String,
+pub struct CoreError {
+    pub code: &'static str,
+    pub message: String,
 }
 
 impl CoreError {
-    fn new(code: &'static str, message: impl Into<String>) -> Self {
+    pub fn new(code: &'static str, message: impl Into<String>) -> Self {
         Self {
             code,
             message: message.into(),
@@ -300,6 +300,37 @@ struct HeaderParams {
     tag_len: u8,
     flags: u8,
     filename: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct MetaInfo {
+    pub filename: String,
+    pub version: u8,
+    pub k: u16,
+    pub r: u16,
+    pub shard_size: u32,
+    pub plain_size: u64,
+    pub stored_size: u64,
+    pub flags: u8,
+    pub argon2_time: u32,
+    pub argon2_mem_kib: u32,
+    pub argon2_par: u16,
+}
+
+fn meta_from_params(params: &HeaderParams) -> MetaInfo {
+    MetaInfo {
+        filename: params.filename.clone(),
+        version: params.version,
+        k: params.k,
+        r: params.r,
+        shard_size: params.shard_size,
+        plain_size: params.plain_size,
+        stored_size: params.stored_size,
+        flags: params.flags,
+        argon2_time: params.argon2_time,
+        argon2_mem_kib: params.argon2_mem_kib,
+        argon2_par: params.argon2_par,
+    }
 }
 
 fn parse_header(hdr: &[u8]) -> Result<HeaderParams, CoreError> {
@@ -719,6 +750,303 @@ fn atomic_replace(tmp: &Path, target: &Path) -> io::Result<()> {
         let _ = fs::remove_file(target);
     }
     fs::rename(tmp, target)
+}
+
+pub fn get_keyfile_hash_rs(path: &str) -> Result<Vec<u8>, CoreError> {
+    keyfile_hash(Path::new(path)).map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))
+}
+
+pub fn read_metadata_rs(path: &str) -> Result<MetaInfo, CoreError> {
+    let (params, _hdr, _hdr_len) = open_header(path)?;
+    Ok(meta_from_params(&params))
+}
+
+pub fn encrypt_file_rs(
+    input_file: &str,
+    output_file: &str,
+    password: &str,
+    keyfile_hash: Option<&[u8]>,
+    compress_alg: Option<&str>,
+    enable_pwchk: bool,
+    k: Option<u16>,
+    r: Option<u16>,
+    shard_size: Option<u32>,
+    argon2_t: Option<u32>,
+    argon2_m: Option<u32>,
+    argon2_p: Option<u16>,
+    original_filename: Option<&str>,
+    is_tar_container: bool,
+) -> Result<(), CoreError> {
+    let k = k.unwrap_or(K_DATA);
+    let r = r.unwrap_or(R_PARITY);
+    let shard_size = shard_size.unwrap_or(SHARD_SIZE);
+    let argon2_t = argon2_t.unwrap_or(ARGON2_TIME);
+    let argon2_m = argon2_m.unwrap_or(ARGON2_MEM_KIB);
+    let argon2_p = argon2_p.unwrap_or(ARGON2_PAR);
+
+    let mut flags = 0u8;
+    if enable_pwchk {
+        flags |= HDR_FLAG_PWCHK;
+    }
+    let mut comp_flag = 0u8;
+    if let Some(alg) = compress_alg {
+        if alg == "zlib" {
+            comp_flag = HDR_FLAG_COMPRESS_ZLIB;
+        } else if alg == "lzma" {
+            comp_flag = HDR_FLAG_COMPRESS_LZMA;
+        } else {
+            return Err(CoreError::new(DECRYPT_UNKNOWN_ERROR, "Unsupported compression"));
+        }
+    }
+    flags |= comp_flag;
+    if is_tar_container {
+        flags |= HDR_FLAG_TAR_CONTAINER;
+    }
+
+    let filename_meta: Option<String> = match original_filename {
+        None => {
+            flags |= HDR_FLAG_HAS_FILENAME;
+            Some(
+                Path::new(input_file)
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string(),
+            )
+        }
+        Some("") => None,
+        Some(name) => {
+            flags |= HDR_FLAG_HAS_FILENAME;
+            Some(name.to_string())
+        }
+    };
+
+    let plain_size = fs::metadata(input_file)
+        .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?
+        .len();
+
+    let mut temp_compressed: Option<NamedTempFile> = None;
+    let mut processing_path = PathBuf::from(input_file);
+
+    if let Some(alg) = compress_alg {
+        let out_dir = Path::new(output_file)
+            .parent()
+            .unwrap_or_else(|| Path::new("."));
+        let tmp = NamedTempFile::new_in(out_dir)
+            .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
+        let mut f_in = BufReader::new(
+            File::open(input_file).map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?,
+        );
+        let f_out = BufWriter::new(
+            tmp.reopen()
+                .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?,
+        );
+
+        if alg == "zlib" {
+            let mut enc = ZlibEncoder::new(f_out, Compression::new(6));
+            let mut buf = [0u8; 64 * 1024];
+            loop {
+                let n = f_in
+                    .read(&mut buf)
+                    .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
+                if n == 0 {
+                    break;
+                }
+                enc.write_all(&buf[..n])
+                    .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
+            }
+            enc.finish()
+                .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
+        } else if alg == "lzma" {
+            let mut enc = xz2::write::XzEncoder::new(f_out, 6);
+            let mut buf = [0u8; 64 * 1024];
+            loop {
+                let n = f_in
+                    .read(&mut buf)
+                    .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
+                if n == 0 {
+                    break;
+                }
+                enc.write_all(&buf[..n])
+                    .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
+            }
+            enc.finish()
+                .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
+        }
+        processing_path = tmp.path().to_path_buf();
+        temp_compressed = Some(tmp);
+    }
+
+    let stored_size = fs::metadata(&processing_path)
+        .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?
+        .len();
+
+    let block_size = k as u64 * shard_size as u64;
+    let num_blocks = if stored_size == 0 {
+        1
+    } else {
+        (stored_size + block_size - 1) / block_size
+    };
+
+    validate_limits(k, r, shard_size, argon2_t, argon2_m, argon2_p, Some(num_blocks))?;
+
+    let (start_header, trailer, prefix, _hdr_len, _hdr_crc, salt, nonce_base, flags) =
+        write_header(
+            plain_size,
+            stored_size,
+            k,
+            r,
+            shard_size,
+            flags,
+            argon2_t,
+            argon2_m,
+            argon2_p,
+            filename_meta.as_deref(),
+        )?;
+
+    let key = derive_key(password, &salt, argon2_t, argon2_m, argon2_p, keyfile_hash)?;
+
+    let out_dir = Path::new(output_file)
+        .parent()
+        .unwrap_or_else(|| Path::new("."));
+    let tmp_out = NamedTempFile::new_in(out_dir)
+        .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
+    let tmp_path = tmp_out.path().to_path_buf();
+
+    let mut f_in = BufReader::new(
+        File::open(&processing_path).map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?,
+    );
+    let mut f_out = BufWriter::new(
+        tmp_out
+            .reopen()
+            .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?,
+    );
+
+    f_out
+        .write_all(&start_header)
+        .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
+
+    if flags & HDR_FLAG_PWCHK != 0 {
+        let nonce = nonce12(nonce_base, 0xFFFFFFFF, 0xFFFFFFFF);
+        let cipher = Aes256Gcm::new_from_slice(&key)
+            .map_err(|e| CoreError::new(DECRYPT_UNKNOWN_ERROR, e.to_string()))?;
+        let ct = cipher
+            .encrypt(
+                Nonce::from_slice(&nonce),
+                Payload {
+                    msg: &PWCHK_PLAINTEXT,
+                    aad: [prefix.as_slice(), PWCHK_MAGIC].concat().as_slice(),
+                },
+            )
+            .map_err(|_| CoreError::new(DECRYPT_UNKNOWN_ERROR, "Password check encrypt failed"))?;
+        let (ct_body, tag) = ct.split_at(PWCHK_PLAINTEXT_LEN);
+        f_out
+            .write_all(PWCHK_MAGIC)
+            .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
+        write_crc_copies(&mut f_out, &[ct_body, tag].concat())
+            .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
+        f_out
+            .write_all(ct_body)
+            .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
+        f_out
+            .write_all(tag)
+            .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
+    }
+
+    let g = build_generator_matrix(k, r)?;
+    let cipher = Aes256Gcm::new_from_slice(&key)
+        .map_err(|e| CoreError::new(DECRYPT_UNKNOWN_ERROR, e.to_string()))?;
+
+    let block_size_usize = block_size as usize;
+    let shard_size_usize = shard_size as usize;
+    let m = (k + r) as usize;
+    let mut block_buf = vec![0u8; block_size_usize];
+
+    for block_index in 0..num_blocks {
+        let mut read_total = 0usize;
+        while read_total < block_size_usize {
+            let n = f_in
+                .read(&mut block_buf[read_total..])
+                .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
+            if n == 0 {
+                break;
+            }
+            read_total += n;
+        }
+        if read_total < block_size_usize {
+            for b in &mut block_buf[read_total..] {
+                *b = 0;
+            }
+        }
+
+        let mut data_shards = Vec::with_capacity(k as usize);
+        for i in 0..k as usize {
+            let start = i * shard_size_usize;
+            let end = start + shard_size_usize;
+            data_shards.push(block_buf[start..end].to_vec());
+        }
+        let coded = fec_encode(&data_shards, &g, k as usize, r as usize)?;
+
+        for shard_index in 0..m {
+            let shard_plain = &coded[shard_index];
+            let nonce = nonce12(nonce_base, block_index as u32, shard_index as u32);
+            let aad = [
+                prefix.as_slice(),
+                &(block_index as u32).to_be_bytes(),
+                &(shard_index as u32).to_be_bytes(),
+            ]
+            .concat();
+            let ct = cipher
+                .encrypt(
+                    Nonce::from_slice(&nonce),
+                    Payload {
+                        msg: shard_plain,
+                        aad: &aad,
+                    },
+                )
+                .map_err(|_| CoreError::new(DECRYPT_UNKNOWN_ERROR, "Encrypt failed"))?;
+            let (ct_body, tag) = ct.split_at(shard_size_usize);
+            write_crc_copies(&mut f_out, &[ct_body, tag].concat())
+                .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
+            f_out
+                .write_all(ct_body)
+                .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
+            f_out
+                .write_all(tag)
+                .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
+        }
+    }
+
+    f_out
+        .write_all(&trailer)
+        .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
+    f_out
+        .flush()
+        .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
+
+    atomic_replace(&tmp_path, Path::new(output_file))
+        .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
+    drop(temp_compressed);
+    Ok(())
+}
+
+pub fn decrypt_file_ex_rs(
+    input_file: &str,
+    output_file: &str,
+    password: &str,
+    keyfile_hash: Option<&[u8]>,
+) -> Result<MetaInfo, CoreError> {
+    let params = decrypt_internal_rs(input_file, output_file, password, keyfile_hash)?;
+    Ok(meta_from_params(&params))
+}
+
+pub fn verify_file_integrity_rs(
+    input_file: &str,
+    password: &str,
+    keyfile_hash: Option<&[u8]>,
+) -> Result<MetaInfo, CoreError> {
+    let params = verify_internal_rs(input_file, password, keyfile_hash)?;
+    Ok(meta_from_params(&params))
 }
 
 #[pyfunction]
@@ -1169,6 +1497,324 @@ fn decrypt_internal(
 
     atomic_replace(&tmp_path, Path::new(output_file))
         .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
+    Ok(params)
+}
+
+fn decrypt_internal_rs(
+    input_file: &str,
+    output_file: &str,
+    password: &str,
+    keyfile_hash: Option<&[u8]>,
+) -> Result<HeaderParams, CoreError> {
+    let (params, hdr, hdr_len) = open_header(input_file)?;
+    if params.version > VERSION_U8 {
+        return Err(CoreError::new(
+            DECRYPT_HEADER_INVALID,
+            format!("Unsupported version {} (max {})", params.version, VERSION_U8),
+        ));
+    }
+    if params.version < 1 {
+        return Err(CoreError::new(
+            DECRYPT_HEADER_INVALID,
+            format!("Invalid version {}", params.version),
+        ));
+    }
+    let block_size = params.k as u64 * params.shard_size as u64;
+    let num_blocks = if params.stored_size == 0 {
+        1
+    } else {
+        (params.stored_size + block_size - 1) / block_size
+    };
+    validate_limits(
+        params.k,
+        params.r,
+        params.shard_size,
+        params.argon2_time,
+        params.argon2_mem_kib,
+        params.argon2_par,
+        Some(num_blocks),
+    )?;
+
+    let mut prefix = Vec::with_capacity(6 + hdr.len());
+    prefix.extend_from_slice(MAGIC);
+    prefix.write_u16::<BigEndian>(hdr_len).unwrap();
+    prefix.extend_from_slice(&hdr);
+
+    let pwchk_present = params.flags & HDR_FLAG_PWCHK != 0;
+    let header_size = 4 + 2 + hdr_len as usize + 4;
+    let mut data_offset = header_size as u64;
+
+    let key = derive_key(
+        password,
+        &params.salt,
+        params.argon2_time,
+        params.argon2_mem_kib,
+        params.argon2_par,
+        keyfile_hash,
+    )?;
+    let cipher = Aes256Gcm::new_from_slice(&key)
+        .map_err(|e| CoreError::new(DECRYPT_UNKNOWN_ERROR, e.to_string()))?;
+
+    let mut f_in =
+        BufReader::new(File::open(input_file).map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?);
+    if pwchk_present {
+        f_in.seek(io::SeekFrom::Start(data_offset))
+            .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
+        let mut blob = vec![0u8; PWCHK_RECORD_SIZE];
+        f_in.read_exact(&mut blob)
+            .map_err(|_| CoreError::new(DECRYPT_TRUNCATED, "File truncated at password check record"))?;
+        let off = 4 + (4 * CRC_COPIES);
+        let ct = &blob[off..off + PWCHK_PLAINTEXT_LEN];
+        let tag = &blob[off + PWCHK_PLAINTEXT_LEN..off + PWCHK_PLAINTEXT_LEN + TAG_LEN];
+        let nonce = nonce12(params.nonce_base, 0xFFFFFFFF, 0xFFFFFFFF);
+        let aad = [prefix.as_slice(), PWCHK_MAGIC].concat();
+        let mut data = Vec::with_capacity(PWCHK_PLAINTEXT_LEN + TAG_LEN);
+        data.extend_from_slice(ct);
+        data.extend_from_slice(tag);
+        if cipher
+            .decrypt(Nonce::from_slice(&nonce), Payload { msg: &data, aad: &aad })
+            .is_err()
+        {
+            return Err(CoreError::new(
+                DECRYPT_PASSWORD_INVALID,
+                "Wrong password or corrupted keyfile.",
+            ));
+        }
+        data_offset += PWCHK_RECORD_SIZE as u64;
+    }
+
+    let g = build_generator_matrix(params.k, params.r)?;
+    let out_dir = Path::new(output_file)
+        .parent()
+        .unwrap_or_else(|| Path::new("."));
+    let tmp_out =
+        NamedTempFile::new_in(out_dir).map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
+    let tmp_path = tmp_out.path().to_path_buf();
+    let f_out =
+        BufWriter::new(tmp_out.reopen().map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?);
+
+    let mut writer: Box<dyn Write> = if params.flags & HDR_FLAG_COMPRESS_ZLIB != 0 {
+        Box::new(ZlibDecoder::new(LimitedWriter::new(f_out, Some(params.plain_size))))
+    } else if params.flags & HDR_FLAG_COMPRESS_LZMA != 0 {
+        Box::new(XzDecoder::new(LimitedWriter::new(f_out, Some(params.plain_size))))
+    } else {
+        Box::new(LimitedWriter::new(f_out, Some(params.plain_size)))
+    };
+
+    f_in.seek(io::SeekFrom::Start(data_offset))
+        .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
+
+    let m = (params.k + params.r) as usize;
+    let shard_size = params.shard_size as usize;
+
+    for block_index in 0..num_blocks {
+        let mut shards: Vec<Option<Vec<u8>>> = vec![None; m];
+        let mut present = vec![false; m];
+
+        for shard_index in 0..m {
+            let mut crc_fields = [0u8; CRC_BLOCK_SIZE];
+            f_in.read_exact(&mut crc_fields)
+                .map_err(|_| CoreError::new(DECRYPT_TRUNCATED, format!("Unexpected EOF reading shard {shard_index} CRC in block {block_index}")))?;
+            let mut crcs = Vec::new();
+            let mut cur = io::Cursor::new(&crc_fields);
+            for _ in 0..CRC_COPIES {
+                crcs.push(cur.read_u32::<BigEndian>().unwrap());
+            }
+            let mut ct = vec![0u8; shard_size];
+            f_in.read_exact(&mut ct)
+                .map_err(|_| CoreError::new(DECRYPT_TRUNCATED, format!("File truncated at shard data (block {block_index}, shard {shard_index})")))?;
+            let mut tag = vec![0u8; params.tag_len as usize];
+            f_in.read_exact(&mut tag)
+                .map_err(|_| CoreError::new(DECRYPT_TRUNCATED, format!("File truncated at authentication tag (block {block_index}, shard {shard_index})")))?;
+            let crc_calc = crc32_bytes(&[ct.as_slice(), tag.as_slice()].concat());
+            if !crcs.contains(&crc_calc) {
+                continue;
+            }
+            let nonce = nonce12(params.nonce_base, block_index as u32, shard_index as u32);
+            let aad = [prefix.as_slice(), &(block_index as u32).to_be_bytes(), &(shard_index as u32).to_be_bytes()].concat();
+            let mut data = Vec::with_capacity(shard_size + tag.len());
+            data.extend_from_slice(&ct);
+            data.extend_from_slice(&tag);
+            if let Ok(pt) = cipher.decrypt(Nonce::from_slice(&nonce), Payload { msg: &data, aad: &aad }) {
+                shards[shard_index] = Some(pt);
+                present[shard_index] = true;
+            }
+        }
+
+        let data_block = if present.iter().take(params.k as usize).all(|&v| v) {
+            let mut out = Vec::with_capacity(params.k as usize);
+            for i in 0..params.k as usize {
+                out.push(shards[i].take().unwrap());
+            }
+            out
+        } else {
+            if present.iter().filter(|v| **v).count() < params.k as usize {
+                return Err(CoreError::new(
+                    DECRYPT_CORRUPT_BEYOND_FEC,
+                    format!("Block {block_index} failed recovery (too many corrupted shards)."),
+                ));
+            }
+            fec_decode(&shards, &present, &g, params.k as usize, params.r as usize)?
+        };
+
+        let mut byte_data = Vec::with_capacity(params.k as usize * shard_size);
+        for shard in data_block {
+            byte_data.extend_from_slice(&shard);
+        }
+
+        if block_index == num_blocks - 1 {
+            let valid_bytes = params.stored_size - (block_index * block_size);
+            writer
+                .write_all(&byte_data[..valid_bytes as usize])
+                .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
+        } else {
+            writer
+                .write_all(&byte_data)
+                .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
+        }
+    }
+
+    writer
+        .flush()
+        .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
+
+    atomic_replace(&tmp_path, Path::new(output_file))
+        .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
+    Ok(params)
+}
+
+fn verify_internal_rs(
+    input_file: &str,
+    password: &str,
+    keyfile_hash: Option<&[u8]>,
+) -> Result<HeaderParams, CoreError> {
+    let (params, hdr, hdr_len) = open_header(input_file)?;
+    if params.version > VERSION_U8 || params.version < 1 {
+        return Err(CoreError::new(
+            DECRYPT_HEADER_INVALID,
+            format!("Unsupported version {}", params.version),
+        ));
+    }
+
+    let block_size = params.k as u64 * params.shard_size as u64;
+    let num_blocks = if params.stored_size == 0 {
+        1
+    } else {
+        (params.stored_size + block_size - 1) / block_size
+    };
+    validate_limits(
+        params.k,
+        params.r,
+        params.shard_size,
+        params.argon2_time,
+        params.argon2_mem_kib,
+        params.argon2_par,
+        Some(num_blocks),
+    )?;
+
+    let mut prefix = Vec::with_capacity(6 + hdr.len());
+    prefix.extend_from_slice(MAGIC);
+    prefix.write_u16::<BigEndian>(hdr_len).unwrap();
+    prefix.extend_from_slice(&hdr);
+
+    let pwchk_present = params.flags & HDR_FLAG_PWCHK != 0;
+    let header_size = 4 + 2 + hdr_len as usize + 4;
+    let mut data_offset = header_size as u64;
+
+    let key = derive_key(
+        password,
+        &params.salt,
+        params.argon2_time,
+        params.argon2_mem_kib,
+        params.argon2_par,
+        keyfile_hash,
+    )?;
+    let cipher = Aes256Gcm::new_from_slice(&key)
+        .map_err(|e| CoreError::new(DECRYPT_UNKNOWN_ERROR, e.to_string()))?;
+
+    let mut f_in =
+        BufReader::new(File::open(input_file).map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?);
+    if pwchk_present {
+        f_in.seek(io::SeekFrom::Start(data_offset))
+            .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
+        let mut blob = vec![0u8; PWCHK_RECORD_SIZE];
+        f_in.read_exact(&mut blob)
+            .map_err(|_| CoreError::new(DECRYPT_TRUNCATED, "File truncated at password check record"))?;
+        let off = 4 + (4 * CRC_COPIES);
+        let ct = &blob[off..off + PWCHK_PLAINTEXT_LEN];
+        let tag = &blob[off + PWCHK_PLAINTEXT_LEN..off + PWCHK_PLAINTEXT_LEN + TAG_LEN];
+        let nonce = nonce12(params.nonce_base, 0xFFFFFFFF, 0xFFFFFFFF);
+        let aad = [prefix.as_slice(), PWCHK_MAGIC].concat();
+        let mut data = Vec::with_capacity(PWCHK_PLAINTEXT_LEN + TAG_LEN);
+        data.extend_from_slice(ct);
+        data.extend_from_slice(tag);
+        if cipher
+            .decrypt(Nonce::from_slice(&nonce), Payload { msg: &data, aad: &aad })
+            .is_err()
+        {
+            return Err(CoreError::new(
+                DECRYPT_PASSWORD_INVALID,
+                "Wrong password or corrupted keyfile.",
+            ));
+        }
+        data_offset += PWCHK_RECORD_SIZE as u64;
+    }
+
+    let g = build_generator_matrix(params.k, params.r)?;
+    let mut f_in =
+        BufReader::new(File::open(input_file).map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?);
+    f_in.seek(io::SeekFrom::Start(data_offset))
+        .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
+
+    let m = (params.k + params.r) as usize;
+    let shard_size = params.shard_size as usize;
+
+    for block_index in 0..num_blocks {
+        let mut shards: Vec<Option<Vec<u8>>> = vec![None; m];
+        let mut present = vec![false; m];
+
+        for shard_index in 0..m {
+            let mut crc_fields = [0u8; CRC_BLOCK_SIZE];
+            f_in.read_exact(&mut crc_fields)
+                .map_err(|_| CoreError::new(DECRYPT_TRUNCATED, format!("Unexpected EOF reading shard {shard_index} CRC in block {block_index}")))?;
+            let mut crcs = Vec::new();
+            let mut cur = io::Cursor::new(&crc_fields);
+            for _ in 0..CRC_COPIES {
+                crcs.push(cur.read_u32::<BigEndian>().unwrap());
+            }
+            let mut ct = vec![0u8; shard_size];
+            f_in.read_exact(&mut ct)
+                .map_err(|_| CoreError::new(DECRYPT_TRUNCATED, format!("File truncated at shard data (block {block_index}, shard {shard_index})")))?;
+            let mut tag = vec![0u8; params.tag_len as usize];
+            f_in.read_exact(&mut tag)
+                .map_err(|_| CoreError::new(DECRYPT_TRUNCATED, format!("File truncated at authentication tag (block {block_index}, shard {shard_index})")))?;
+            let crc_calc = crc32_bytes(&[ct.as_slice(), tag.as_slice()].concat());
+            if !crcs.contains(&crc_calc) {
+                continue;
+            }
+            let nonce = nonce12(params.nonce_base, block_index as u32, shard_index as u32);
+            let aad = [prefix.as_slice(), &(block_index as u32).to_be_bytes(), &(shard_index as u32).to_be_bytes()].concat();
+            let mut data = Vec::with_capacity(shard_size + tag.len());
+            data.extend_from_slice(&ct);
+            data.extend_from_slice(&tag);
+            if let Ok(pt) = cipher.decrypt(Nonce::from_slice(&nonce), Payload { msg: &data, aad: &aad }) {
+                shards[shard_index] = Some(pt);
+                present[shard_index] = true;
+            }
+        }
+
+        if present.iter().take(params.k as usize).all(|&v| v) {
+            // OK
+        } else {
+            if present.iter().filter(|v| **v).count() < params.k as usize {
+                return Err(CoreError::new(
+                    DECRYPT_CORRUPT_BEYOND_FEC,
+                    format!("Block {block_index} failed recovery (too many corrupted shards)."),
+                ));
+            }
+            let _ = fec_decode(&shards, &present, &g, params.k as usize, params.r as usize)?;
+        }
+    }
     Ok(params)
 }
 

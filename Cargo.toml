@@ -5,7 +5,7 @@ edition = "2021"
 
 [lib]
 name = "crypto_core_rs"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 pyo3 = { version = "0.21", features = ["extension-module"] }
@@ -19,3 +19,8 @@ byteorder = "1.5"
 flate2 = "1.0"
 xz2 = "0.1"
 tempfile = "3.10"
+clap = { version = "4.5", features = ["derive"] }
+rpassword = "7.3"
+walkdir = "2.5"
+tar = "0.4"
+bzip2 = "0.4"
