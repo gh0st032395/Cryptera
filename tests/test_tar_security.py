@@ -8,7 +8,7 @@ from pathlib import Path
 # Add project root to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from main_gui import _safe_tar_extract
+from crypto_core.archive import _safe_tar_extract
 
 def create_evil_tar(path, cases):
     with tarfile.open(path, "w") as tar:

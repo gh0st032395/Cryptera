@@ -2,6 +2,10 @@
 line-length = 120
 target-version = "py310"
 
+[build-system]
+requires = ["maturin>=1.5"]
+build-backend = "maturin"
+
 [tool.ruff.lint]
 select = ["E", "F", "W", "C90", "I", "N"]
 ignore = ["N802", "N803", "N806"] # Allow lowercase function/arg names if legacy

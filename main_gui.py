@@ -7,8 +7,22 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 import customtkinter as ctk
 
-from crypto_core import encrypt_file, decrypt_file, decrypt_file_ex, get_keyfile_hash, read_metadata
-from crypto_core.constants import PROFILES_SECURITY, PROFILES_INTEGRITY, HDR_FLAG_HAS_FILENAME, PWCHK_RECORD_SIZE
+from crypto_core import (
+    encrypt_file,
+    decrypt_file,
+    decrypt_file_ex,
+    get_keyfile_hash,
+    read_metadata,
+    verify_file_integrity,
+)
+from crypto_core.constants import (
+    PROFILES_SECURITY,
+    PROFILES_INTEGRITY,
+    HDR_FLAG_HAS_FILENAME,
+    HDR_FLAG_TAR_CONTAINER,
+    PWCHK_RECORD_SIZE,
+)
+from crypto_core.archive import _create_tar_from_folder, _tar_suffix, _ensure_ext, _safe_tar_extract
 
 # -------------------------
 # UI Configuration
@@ -30,149 +44,9 @@ ERROR_MAP = {
     "PARAMS_OUT_OF_LIMITS": "Security parameters out of safe bounds.",
     "IO_ERROR": "Read/Write error.",
     "DECOMPRESSION_BOMB": "Security alert: output size exceeds expected limit (Decompression Bomb protection).",
+    "CANCELLED": "Operation cancelled.",
     "UNKNOWN_ERROR": "An unknown error occurred during encryption/decryption.",
 }
-
-# -------------------------
-# TAR Helpers
-# -------------------------
-def _tar_write_mode(comp: str) -> str:
-    return {
-        "none": "w",
-        "gz": "w:gz",
-        "bz2": "w:bz2",
-        "xz": "w:xz",
-    }[comp]
-
-def _tar_suffix(comp: str) -> str:
-    return {
-        "none": ".tar",
-        "gz": ".tar.gz",
-        "bz2": ".tar.bz2",
-        "xz": ".tar.xz",
-    }[comp]
-
-def _ensure_ext(path: str, ext: str) -> str:
-    if not path:
-        return path
-    _root, cur_ext = os.path.splitext(path)
-    if cur_ext == "":
-        return path + ext
-    return path
-
-def _win_long_path(p: str) -> str:
-    if os.name != "nt": return p
-    p = os.path.abspath(p)
-    if p.startswith("\\\\?\\"): return p
-    if p.startswith("\\\\"): return "\\\\?\\UNC\\" + p[2:]
-    return "\\\\?\\" + p if len(p) >= 240 else p
-
-def _create_tar_from_folder(folder: str, tar_path: str, comp: str, skip_special: bool, progress_cb=None) -> list:
-    skipped = []
-    base = os.path.abspath(folder)
-    
-    total_files = 0
-    for _, _, filenames in os.walk(base, followlinks=False):
-        total_files += len(filenames)
-    total_files = max(1, total_files)
-
-    mode = _tar_write_mode(comp)
-    done_cnt = 0
-    arcname = os.path.basename(base) or "archive"
-
-    with tarfile.open(tar_path, mode, format=tarfile.PAX_FORMAT) as tar:
-        tar.add(base, arcname=arcname, recursive=False)
-        
-        for dirpath, dirnames, filenames in os.walk(base, followlinks=False):
-            if skip_special:
-                dirnames[:] = [d for d in dirnames if not os.path.islink(os.path.join(dirpath, d))]
-                filenames[:] = [f for f in filenames if not os.path.islink(os.path.join(dirpath, f))]
-
-            rel_path = os.path.relpath(dirpath, base)
-            parent_arc = arcname if rel_path == "." else os.path.join(arcname, rel_path)
-
-            for dirname in dirnames:
-                 full_path = os.path.join(dirpath, dirname)
-                 arc_path = os.path.join(parent_arc, dirname).replace(os.sep, "/")
-                 tar.add(full_path, arcname=arc_path, recursive=False)
-
-            for fname in filenames:
-                full_path = os.path.join(dirpath, fname)
-                arc_path = os.path.join(parent_arc, fname).replace(os.sep, "/")
-                
-                try:
-                    with open(_win_long_path(full_path), "rb") as f:
-                        info = tar.gettarinfo(fileobj=f, arcname=arc_path)
-                        tar.addfile(info, fileobj=f)
-                    done_cnt += 1
-                    if progress_cb and done_cnt % 10 == 0:
-                        progress_cb(done_cnt, total_files)
-                except Exception as e:
-                    if skip_special:
-                        skipped.append(f"{fname}: {e}")
-                    else:
-                        raise e
-    
-    if progress_cb:
-        progress_cb(total_files, total_files)
-    return skipped
-
-def _safe_tar_extract(tar: tarfile.TarFile, out_dir: str, progress_cb=None):
-    """
-    Prevent path traversal attacks (ZipSlip), Symlink attacks, and Hardlink attacks.
-    """
-    out_dir = os.path.abspath(out_dir)
-    members = tar.getmembers()
-    total = max(1, len(members))
-    
-    for i, member in enumerate(members):
-        # 1. Path Traversal & Absolute Path Check
-        # Normalize to avoid deceptive prefixes
-        out_dir = os.path.abspath(out_dir)
-        
-        # Check if member.name is absolute
-        if os.path.isabs(member.name):
-            raise Exception(f"Malicious path detected (Absolute): {member.name}")
-
-        target_path = os.path.join(out_dir, member.name)
-        abs_target = os.path.abspath(target_path)
-        
-        # Use commonpath to ensure the target is strictly inside out_dir
-        try:
-            is_inside = os.path.commonpath([out_dir, abs_target]) == out_dir
-        except ValueError:
-            # Paths on different drives on Windows will raise ValueError
-            is_inside = False
-            
-        if not is_inside:
-            raise Exception(f"Malicious path detected (ZipSlip): {member.name}")
-            
-        # 2. Secure Extraction Logic
-        if member.isfile():
-            # Manual extraction with strict permissions (0o600)
-            os.makedirs(os.path.dirname(abs_target), exist_ok=True)
-            try:
-                fileobj = tar.extractfile(member)
-                if fileobj:
-                    # Open with 0o600 permissions
-                    fd = os.open(abs_target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-                    with os.fdopen(fd, 'wb') as f_out:
-                        import shutil
-                        shutil.copyfileobj(fileobj, f_out)
-                    fileobj.close()
-            except Exception as e:
-                raise Exception(f"Failed to extract {member.name}: {str(e)}")
-        elif member.isdir():
-            os.makedirs(abs_target, exist_ok=True)
-        else:
-            # Skip symlinks, hardlinks, devices, pipes etc.
-            continue
-
-        if progress_cb and i % 5 == 0:
-            progress_cb(i, total)
-            
-    if progress_cb: progress_cb(total, total)
-
 
 class CryptoApp(ctk.CTk):
     def __init__(self):
@@ -210,6 +84,9 @@ class CryptoApp(ctk.CTk):
         
         self.btn_pause = ctk.CTkButton(self.ctrl_frame, text="Pause", width=60, state="disabled", command=self.toggle_pause)
         self.btn_pause.pack(side="right", padx=(5,0))
+
+        self.btn_cancel = ctk.CTkButton(self.ctrl_frame, text="Cancel", width=60, state="disabled", fg_color="#B33A3A", command=self.cancel_operation)
+        self.btn_cancel.pack(side="right", padx=(5,0))
         
         self.progress_bar = ctk.CTkProgressBar(self.ctrl_frame)
         self.progress_bar.pack(side="left", fill="x", expand=True)
@@ -219,6 +96,8 @@ class CryptoApp(ctk.CTk):
         self._control_event = threading.Event()
         self._control_event.set() # Running by default
         self._paused = False
+        self._cancel_event = threading.Event()
+        self._extract_available = False
 
     def setup_encrypt_tab(self):
         # File Source
@@ -240,6 +119,13 @@ class CryptoApp(ctk.CTk):
         self.entry_enc_folder = ctk.CTkEntry(row_folder, placeholder_text="...or select a folder (Auto TAR)")
         self.entry_enc_folder.pack(side="left", fill="x", expand=True, padx=(0, 10))
         ctk.CTkButton(row_folder, text="Browse Folder", width=100, command=self.browse_enc_folder).pack(side="right")
+
+        # Output
+        row_out = ctk.CTkFrame(grp_source, fg_color="transparent")
+        row_out.pack(fill="x", padx=10, pady=5)
+        self.entry_enc_output = ctk.CTkEntry(row_out, placeholder_text="Output .ecf file (optional)")
+        self.entry_enc_output.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        ctk.CTkButton(row_out, text="Save As", width=100, command=self.browse_enc_output).pack(side="right")
 
         # Options
         grp_opts = ctk.CTkFrame(self.tab_enc)
@@ -352,6 +238,10 @@ class CryptoApp(ctk.CTk):
         
         self.btn_dec_extract = ctk.CTkButton(self.tab_dec, text="Decrypt & Extract Project/Folder", height=40, fg_color="green", command=lambda: self.run_decryption(extract=True))
         self.btn_dec_extract.pack(fill="x", padx=10, pady=5)
+        self.btn_dec_extract.configure(state="disabled")
+
+        self.btn_verify = ctk.CTkButton(self.tab_dec, text="Verify Integrity", height=40, fg_color="#555", command=self.run_verify)
+        self.btn_verify.pack(fill="x", padx=10, pady=(15, 5))
 
     def open_advanced_settings(self):
         top = ctk.CTkToplevel(self)
@@ -395,11 +285,22 @@ class CryptoApp(ctk.CTk):
         if f:
             self.entry_enc_file.delete(0, "end"); self.entry_enc_file.insert(0, f)
             self.entry_enc_folder.delete(0, "end")
+            if not self.entry_enc_output.get():
+                self.entry_enc_output.delete(0, "end")
+                self.entry_enc_output.insert(0, _ensure_ext(f + ".ecf", ".ecf"))
     def browse_enc_folder(self):
         d = filedialog.askdirectory()
         if d:
             self.entry_enc_folder.delete(0, "end"); self.entry_enc_folder.insert(0, d)
             self.entry_enc_file.delete(0, "end")
+            if not self.entry_enc_output.get():
+                self.entry_enc_output.delete(0, "end")
+                self.entry_enc_output.insert(0, _ensure_ext(d + ".ecf", ".ecf"))
+    def browse_enc_output(self):
+        f = filedialog.asksaveasfilename(defaultextension=".ecf", filetypes=[("Encrypted", "*.ecf"), ("All", "*.*")])
+        if f:
+            self.entry_enc_output.delete(0, "end")
+            self.entry_enc_output.insert(0, f)
     def browse_dec_file(self):
         f = filedialog.askopenfilename(filetypes=[("Encrypted", "*.ecf"), ("All", "*.*")])
         if f:
@@ -436,6 +337,13 @@ class CryptoApp(ctk.CTk):
             self._paused = True
             self.btn_pause.configure(text="Resume", fg_color="orange")
 
+    def cancel_operation(self):
+        if not self._busy:
+            return
+        self._cancel_event.set()
+        self._control_event.set()
+        self.set_status("Cancelling...", None)
+
     def set_status(self, msg, progress=None):
         self.after(0, lambda: self.status_label.configure(text=msg))
         if progress is not None:
@@ -445,14 +353,17 @@ class CryptoApp(ctk.CTk):
         self._busy = busy
         self._paused = False
         self._control_event.set() # Ensure running
+        self._cancel_event.clear()
         
         state = "disabled" if busy else "normal"
         self.btn_enc_action.configure(state=state)
         self.btn_dec_file.configure(state=state)
-        self.btn_dec_extract.configure(state=state)
+        self.btn_dec_extract.configure(state=state if busy else ("normal" if self._extract_available else "disabled"))
+        self.btn_verify.configure(state=state)
         
         # Pause button logic
         self.btn_pause.configure(state="normal" if busy else "disabled", text="Pause", fg_color=["#3B8ED0", "#1F6AA5"])
+        self.btn_cancel.configure(state="normal" if busy else "disabled")
 
     def get_keyfile_hash(self, is_dec=False):
         use = self.dec_use_keyfile_var.get() if is_dec else self.use_keyfile_var.get()
@@ -467,8 +378,47 @@ class CryptoApp(ctk.CTk):
             messagebox.showerror("Keyfile Error", f"Could not process keyfile: {str(e)}")
             return None
 
-    def ask_password(self):
-        return ctk.CTkInputDialog(text="Enter Password:", title="Authentication").get_input()
+    def prompt_password(self, title: str, confirm: bool = False):
+        result = {"value": None}
+
+        top = ctk.CTkToplevel(self)
+        top.title(title)
+        top.geometry("360x220" if confirm else "360x170")
+        top.transient(self)
+        top.grab_set()
+
+        ctk.CTkLabel(top, text=title, font=("Arial", 14, "bold")).pack(pady=(15, 10))
+        entry_pwd = ctk.CTkEntry(top, show="*")
+        entry_pwd.pack(fill="x", padx=20, pady=5)
+
+        entry_confirm = None
+        if confirm:
+            entry_confirm = ctk.CTkEntry(top, show="*")
+            entry_confirm.pack(fill="x", padx=20, pady=5)
+
+        btn_frame = ctk.CTkFrame(top, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=20, pady=15)
+
+        def on_ok():
+            pwd = entry_pwd.get()
+            if not pwd:
+                messagebox.showwarning("Password Required", "Please enter a password.")
+                return
+            if confirm and entry_confirm:
+                if pwd != entry_confirm.get():
+                    messagebox.showwarning("Password Mismatch", "Passwords do not match.")
+                    return
+            result["value"] = pwd
+            top.destroy()
+
+        def on_cancel():
+            top.destroy()
+
+        ctk.CTkButton(btn_frame, text="OK", command=on_ok).pack(side="right", padx=(5, 0))
+        ctk.CTkButton(btn_frame, text="Cancel", command=on_cancel).pack(side="right")
+
+        self.wait_window(top)
+        return result["value"]
 
     def show_file_info(self, filepath):
         """Display technical details of encrypted file in info panel"""
@@ -480,6 +430,8 @@ class CryptoApp(ctk.CTk):
             if params['flags'] & 0x02: comp_flags.append("zlib")
             if params['flags'] & 0x08: comp_flags.append("lzma")
             comp_str = ", ".join(comp_flags) if comp_flags else "None"
+
+            is_tar = (params['flags'] & HDR_FLAG_TAR_CONTAINER) != 0
                 
             # Calculate file size and overhead
             plain_size_mb = params['plain_size'] / (1024 * 1024)
@@ -492,6 +444,13 @@ class CryptoApp(ctk.CTk):
             fname_disp = params.get('filename')
             if not fname_disp or (params['flags'] & HDR_FLAG_HAS_FILENAME == 0):
                 fname_disp = "(Hidden)"
+            else:
+                fname_disp = fname_disp
+
+            if not is_tar and isinstance(fname_disp, str):
+                lower_name = fname_disp.lower()
+                if lower_name.endswith((".tar", ".tar.gz", ".tar.bz2", ".tar.xz")):
+                    is_tar = True
 
             info = f"""Format Version: {params['version']}
 Plain Size:     {plain_size_mb:.2f} MB
@@ -499,17 +458,23 @@ Stored Size:    {stored_size_mb:.2f} MB ({num_blocks} blocks)
 Integrity:      k={params['k']}, r={params['r']}, shard={params['shard_size']//1024}KB (Overhead: {overhead_pct:.0f}%)
 Security:       Argon2id (t={params['argon2_time']}, m={params['argon2_mem_kib']//1024}MB, p={params['argon2_par']})
 Compression:    {comp_str}
+Container:      {"TAR" if is_tar else "None"}
 Filename:       {fname_disp}"""
                 
             self.info_text.configure(state="normal")
             self.info_text.delete("1.0", "end")
             self.info_text.insert("1.0", info)
             self.info_text.configure(state="disabled")
+
+            self._extract_available = is_tar
+            self.btn_dec_extract.configure(state="normal" if is_tar else "disabled")
         except Exception as e:
             self.info_text.configure(state="normal")
             self.info_text.delete("1.0", "end")
             self.info_text.insert("1.0", f"Error reading file: {str(e)}")
             self.info_text.configure(state="disabled")
+            self._extract_available = False
+            self.btn_dec_extract.configure(state="disabled")
 
     # -------------------------
     # Logic
@@ -517,22 +482,30 @@ Filename:       {fname_disp}"""
     def run_encryption(self):
         file_path = self.entry_enc_file.get()
         folder_path = self.entry_enc_folder.get()
+        out_path = self.entry_enc_output.get().strip()
         
         if not file_path and not folder_path:
              messagebox.showerror("Error", "Please select a file or folder.")
              return
 
         # Password
-        pwd_dialog = ctk.CTkInputDialog(text="Enter Encryption Password:", title="Password")
-        password = pwd_dialog.get_input()
+        password = self.prompt_password("Encryption Password", confirm=True)
         if not password:
             messagebox.showwarning("Password Required", "Please enter a password to proceed.")
             return
+
+        if not out_path:
+            if folder_path:
+                out_path = _ensure_ext(folder_path + ".ecf", ".ecf")
+            else:
+                out_path = _ensure_ext(file_path + ".ecf", ".ecf")
+        else:
+            out_path = _ensure_ext(out_path, ".ecf")
         
         # Thread
-        threading.Thread(target=self._encryption_thread, args=(file_path, folder_path, password), daemon=True).start()
+        threading.Thread(target=self._encryption_thread, args=(file_path, folder_path, password, out_path), daemon=True).start()
 
-    def _encryption_thread(self, file_path, folder_path, password):
+    def _encryption_thread(self, file_path, folder_path, password, out_path):
         self.set_busy(True)
         self.btn_pause.configure(state="normal")
         tmp_tar = None
@@ -540,8 +513,8 @@ Filename:       {fname_disp}"""
         try:
             # Inputs
             # Get keyfile bytes if enabled
-            kf_bytes = self.get_keyfile_bytes(is_dec=False)
-            if self.use_keyfile_var.get() and not kf_bytes:
+            kf_hash = self.get_keyfile_hash(is_dec=False)
+            if self.use_keyfile_var.get() and not kf_hash:
                  raise Exception("Keyfile selected but could not be read (or empty/missing).")
 
             compress = self.comp_var.get()     # Folder comp
@@ -554,7 +527,6 @@ Filename:       {fname_disp}"""
 
             input_target = file_path
             original_filename = None
-            out_path = None
             
             # 1. Handle Folder -> Tar
             if folder_path:
@@ -563,7 +535,9 @@ Filename:       {fname_disp}"""
                 os.close(fd)
                 
                 errs = _create_tar_from_folder(folder_path, tmp_tar, compress, skip_special, 
-                                        lambda done, total: self.set_status(f"Archiving: {done}/{total}", done/total if total > 0 else 0))
+                                        lambda done, total: self.set_status(f"Archiving: {done}/{total}", done/total if total > 0 else 0),
+                                        control_event=self._control_event,
+                                        cancel_event=self._cancel_event)
                 
                 if errs:
                      print("Skipped items:\n" + "\n".join(errs))
@@ -572,10 +546,8 @@ Filename:       {fname_disp}"""
                 # Suggest output name: foldername.tar.gz
                 base_name = os.path.basename(folder_path) + _tar_suffix(compress)
                 original_filename = base_name 
-                out_path = folder_path + ".ecf" # Default output for folder
             else:
                 original_filename = os.path.basename(input_target)
-                out_path = input_target + ".ecf"
             
             # Privacy: Hide filename if requested
             if self.hide_filename_var.get():
@@ -592,9 +564,11 @@ Filename:       {fname_disp}"""
                 enable_pwchk=self.pwchk_var.get(),
                 k=int_p['k'], r=int_p['r'],
                 argon2_t=sec_p['t'], argon2_m=sec_p['m'], argon2_p=sec_p['p'],
+                cancel_event=self._cancel_event,
                 control_event=self._control_event,
                 progress_cb=lambda stage, done, total: self.set_status(f"{stage.capitalize()}: {int(done/total*100) if total > 0 else 0}%", done/total if total > 0 else 0),
-                original_filename=original_filename # Pass it!
+                original_filename=original_filename, # Pass it!
+                is_tar_container=bool(folder_path)
             )
             
             msg = f"Encryption Complete!\nSaved to: {out_path}"
@@ -621,10 +595,12 @@ Filename:       {fname_disp}"""
         if not infile:
             messagebox.showwarning("Input", "Select input file.")
             return
+        if extract and not self._extract_available:
+            messagebox.showwarning("Not a TAR", "This file does not appear to be a TAR container.")
+            return
 
         # 1. Password
-        pwd_dialog = ctk.CTkInputDialog(text="Enter Decryption Password:", title="Password")
-        password = pwd_dialog.get_input()
+        password = self.prompt_password("Decryption Password", confirm=False)
         if not password:
             messagebox.showwarning("Password Required", "Please enter a password to proceed.")
             return
@@ -684,6 +660,7 @@ Filename:       {fname_disp}"""
                 output_file=dest_path, 
                 password=password,
                 keyfile_hash=kf_hash,
+                cancel_event=self._cancel_event,
                 control_event=self._control_event,
                 progress_cb=lambda stage, done, total: self.set_status(f"{stage.capitalize()}: {int(done/total*100) if total > 0 else 0}%", done/total if total > 0 else 0)
             )
@@ -726,6 +703,49 @@ Filename:       {fname_disp}"""
                         os.remove(temp_dec)
                     except Exception as e:
                         print(f"Warning: Could not remove temporary file {temp_dec}: {e}")
+            self.set_busy(False)
+            self.btn_pause.configure(state="disabled")
+            self.set_status("Ready", 0)
+
+    def run_verify(self):
+        infile = self.entry_dec_file.get()
+        if not infile:
+            messagebox.showwarning("Input", "Select input file.")
+            return
+
+        password = self.prompt_password("Verification Password", confirm=False)
+        if not password:
+            messagebox.showwarning("Password Required", "Please enter a password to proceed.")
+            return
+
+        kf_hash = self.get_keyfile_hash(is_dec=True)
+        if self.dec_use_keyfile_var.get() and not kf_hash:
+            return
+
+        threading.Thread(target=self._verify_thread, args=(infile, password, kf_hash), daemon=True).start()
+
+    def _verify_thread(self, infile, password, kf_hash):
+        self.set_busy(True)
+        self.btn_pause.configure(state="normal")
+        try:
+            self.set_status("Verifying...", 0)
+            ok, code, msg, meta = verify_file_integrity(
+                input_file=infile,
+                password=password,
+                keyfile_hash=kf_hash,
+                cancel_event=self._cancel_event,
+                control_event=self._control_event,
+                progress_cb=lambda stage, done, total: self.set_status(f"{stage.capitalize()}: {int(done/total*100) if total > 0 else 0}%", done/total if total > 0 else 0)
+            )
+
+            if not ok:
+                err_text = ERROR_MAP.get(code, f"Code {code}")
+                raise Exception(f"{err_text}\nDetails: {msg}")
+
+            self.after(0, lambda: messagebox.showinfo("Verification", "Integrity check OK."))
+        except Exception as e:
+            self.after(0, lambda: messagebox.showerror("Verification Error", str(e)))
+        finally:
             self.set_busy(False)
             self.btn_pause.configure(state="disabled")
             self.set_status("Ready", 0)

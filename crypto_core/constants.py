@@ -67,6 +67,7 @@ HDR_FLAG_COMPRESS_ZLIB = 0x02
 HDR_FLAG_COMPRESS_ZSTD = 0x04 # Reserved / Example
 HDR_FLAG_COMPRESS_LZMA = 0x08
 HDR_FLAG_HAS_FILENAME = 0x10
+HDR_FLAG_TAR_CONTAINER = 0x20
 
 ENABLE_PWCHK_RECORD = True
 PWCHK_MAGIC = b"PWCK"
@@ -121,6 +122,10 @@ class LimitsExceededError(DecryptError):
     def __init__(self, message="Security parameters out of safe bounds."):
         super().__init__("PARAMS_OUT_OF_LIMITS", message)
 
+class OperationCancelledError(DecryptError):
+    def __init__(self, message="Operation cancelled."):
+        super().__init__("CANCELLED", message)
+
 DECRYPT_OK = "OK"
 DECRYPT_PASSWORD_INVALID = "PASSWORD_INVALID"
 DECRYPT_CORRUPT_BEYOND_FEC = "CORRUPT_BEYOND_FEC"
@@ -128,6 +133,7 @@ DECRYPT_HEADER_INVALID = "HEADER_INVALID"
 DECRYPT_PARAMS_OUT_OF_LIMITS = "PARAMS_OUT_OF_LIMITS"
 DECRYPT_TRUNCATED = "TRUNCATED"
 DECRYPT_IO_ERROR = "IO_ERROR"
+DECRYPT_CANCELLED = "CANCELLED"
 DECRYPT_UNKNOWN_ERROR = "UNKNOWN_ERROR"
 
 LAST_DECRYPT_STATUS = DECRYPT_OK

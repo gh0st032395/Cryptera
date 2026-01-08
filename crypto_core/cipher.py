@@ -238,15 +238,22 @@ def _decompression_stream(target, algorithm, limit=None):
 
 # ... (Previous imports)
 
+def _check_cancel(cancel_event: Optional[threading.Event]) -> None:
+    if cancel_event and cancel_event.is_set():
+        raise OperationCancelledError("Operation cancelled.")
+
+
 def encrypt_file(input_file: str, output_file: str, password: str,
                  keyfile: bytes = None, compress_alg: str = None,
                  enable_pwchk: bool = True,
                  k: int = None, r: int = None, shard_size: int = None,
                  argon2_t: int = None, argon2_m: int = None, argon2_p: int = None,
                  control_event: threading.Event = None,
+                 cancel_event: threading.Event = None,
                  progress_cb: Optional[ProgressCallback] = None,
                  original_filename: str = None,
-                 keyfile_hash: bytes = None) -> None:
+                 keyfile_hash: bytes = None,
+                 is_tar_container: bool = False) -> None:
     
     # Defaults
     k = k or K_DATA
@@ -272,6 +279,8 @@ def encrypt_file(input_file: str, output_file: str, password: str,
         comp_flag = HDR_FLAG_COMPRESS_LZMA
 
     flags |= comp_flag
+    if is_tar_container:
+        flags |= HDR_FLAG_TAR_CONTAINER
 
     # Handle filename privacy
     if original_filename is None:
@@ -301,6 +310,7 @@ def encrypt_file(input_file: str, output_file: str, password: str,
                     # Check Pause
                     if control_event and not control_event.is_set():
                         control_event.wait()
+                    _check_cancel(cancel_event)
                     f_c.write(chunk)
             
             processing_file = temp_compressed
@@ -362,6 +372,7 @@ def encrypt_file(input_file: str, output_file: str, password: str,
                     # Check Pause
                     if control_event and not control_event.is_set():
                         control_event.wait()
+                    _check_cancel(cancel_event)
 
                     chunk = f_in.read(block_size)
                     if len(chunk) < block_size:
@@ -404,6 +415,7 @@ def encrypt_file(input_file: str, output_file: str, password: str,
 def decrypt_file_ex(input_file: str, output_file: str, password: str,
                     keyfile: bytes = None,
                     control_event: threading.Event = None,
+                    cancel_event: threading.Event = None,
                     progress_cb: Optional[ProgressCallback] = None,
                     keyfile_hash: bytes = None) -> Tuple[bool, str, str, dict]:
     
@@ -520,6 +532,7 @@ def decrypt_file_ex(input_file: str, output_file: str, password: str,
                         # Check Pause
                         if control_event and not control_event.is_set():
                             control_event.wait()
+                        _check_cancel(cancel_event)
 
                         plain_shards = [None] * m
                         present = [False] * m
@@ -592,6 +605,150 @@ def decrypt_file(input_file: str, output_file: str, password: str, progress_cb=N
     return ok
 
 
+def verify_file_integrity(input_file: str, password: str,
+                          keyfile: bytes = None,
+                          control_event: threading.Event = None,
+                          cancel_event: threading.Event = None,
+                          progress_cb: Optional[ProgressCallback] = None,
+                          keyfile_hash: bytes = None) -> Tuple[bool, str, str, dict]:
+    metadata = {}
+    try:
+        file_total_size = os.path.getsize(input_file)
+
+        with open(input_file, "rb") as f_in:
+            start_hdr = _read_header_from_start(f_in)
+            if start_hdr is not None:
+                hdr, hdr_len, hdr_crc = start_hdr
+            else:
+                hdr_end = _read_header_from_end(f_in)
+                if hdr_end is None:
+                    raise HeaderInvalidError("Header not found.")
+                hdr, hdr_len, hdr_crc = hdr_end
+
+            params = _parse_header(hdr)
+            metadata = {
+                "filename": params.get("filename", ""),
+                "k": params["k"],
+                "r": params["r"],
+                "version": params["version"],
+                "flags": params["flags"],
+            }
+
+            if params["version"] > VERSION:
+                raise UnsupportedVersionError(f"Unsupported version {params['version']} (max {VERSION})")
+            if params["version"] < 1:
+                raise HeaderInvalidError(f"Invalid version {params['version']}")
+
+            k = params["k"]
+            r = params["r"]
+            shard_size = params["shard_size"]
+            m = k + r
+            block_size = k * shard_size
+            tag_len = params.get("tag_len", TAG_LEN)
+
+            num_blocks = math.ceil(params["file_size"] / block_size) if params["file_size"] else 1
+
+            _validate_limits(
+                k=k, r=r, shard_size=shard_size,
+                argon2_time=params["argon2_time"], argon2_mem_kib=params["argon2_mem_kib"], argon2_par=params["argon2_par"],
+                num_blocks=num_blocks
+            )
+
+            prefix = MAGIC + struct.pack(">H", hdr_len) + hdr
+
+            pwchk_present = (params["flags"] & HDR_FLAG_PWCHK) != 0
+            header_size = 4 + 2 + hdr_len + 4
+            data_offset = header_size
+
+            key = _derive_key(
+                password=password,
+                salt=params["salt"],
+                t=params["argon2_time"],
+                mem_kib=params["argon2_mem_kib"],
+                par=params["argon2_par"],
+                keyfile=keyfile,
+                keyfile_hash=keyfile_hash
+            )
+
+            if pwchk_present:
+                f_in.seek(data_offset)
+                blob = f_in.read(PWCHK_RECORD_SIZE)
+                if len(blob) != PWCHK_RECORD_SIZE:
+                    raise TruncatedFileError(f"File truncated at password check record (expected {PWCHK_RECORD_SIZE} bytes, got {len(blob)})")
+                off = 4 + (4*CRC_COPIES)
+                ct = blob[off:off+PWCHK_PLAINTEXT_LEN]
+                off += PWCHK_PLAINTEXT_LEN
+                tag = blob[off:off+16]
+
+                nonce = _nonce12(params["nonce_base"], 0xFFFFFFFF, 0xFFFFFFFF)
+                cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
+                cipher.update(prefix + PWCHK_MAGIC)
+                try:
+                    _ = cipher.decrypt_and_verify(ct, tag)
+                except ValueError:
+                    raise WrongPasswordError("Wrong password or corrupted keyfile.")
+
+                data_offset += PWCHK_RECORD_SIZE
+
+            G = _get_G(k, r)
+
+            f_in.seek(data_offset)
+            _progress(progress_cb, "verify", 0, num_blocks)
+
+            for block_index in range(num_blocks):
+                if control_event and not control_event.is_set():
+                    control_event.wait()
+                _check_cancel(cancel_event)
+
+                plain_shards = [None] * m
+                present = [False] * m
+
+                for shard_index in range(m):
+                    crc_fields = f_in.read(CRC_BLOCK_SIZE)
+                    if len(crc_fields) < CRC_BLOCK_SIZE:
+                        raise TruncatedFileError(f"Unexpected EOF reading shard {shard_index} CRC in block {block_index}.")
+
+                    crc_vals = list(struct.unpack(">" + "I" * CRC_COPIES, crc_fields))
+
+                    ct = f_in.read(shard_size)
+                    if len(ct) < shard_size:
+                        raise TruncatedFileError(f"File truncated at shard data (block {block_index}, shard {shard_index})")
+                    tag = f_in.read(tag_len)
+                    if len(tag) < tag_len:
+                        raise TruncatedFileError(f"File truncated at authentication tag (block {block_index}, shard {shard_index})")
+
+                    crc_calc = zlib.crc32(ct + tag) & 0xFFFFFFFF
+                    if crc_calc not in crc_vals:
+                        continue
+
+                    nonce = _nonce12(params["nonce_base"], block_index, shard_index)
+                    cipher = AES.new(key, AES.MODE_GCM, nonce=nonce)
+                    cipher.update(prefix + struct.pack(">II", block_index, shard_index))
+
+                    try:
+                        pt = cipher.decrypt_and_verify(ct, tag)
+                        plain_shards[shard_index] = np.frombuffer(pt, dtype=np.uint8)
+                        present[shard_index] = True
+                    except ValueError:
+                        continue
+
+                if all(present[:k]):
+                    pass
+                else:
+                    if sum(present) < k:
+                        raise CorruptedDataError(f"Block {block_index} failed recovery (too many corrupted shards).")
+                    _ = _fec_decode(plain_shards, present, G, k, r)
+
+                _progress(progress_cb, "verify", block_index + 1, num_blocks)
+
+    except DecryptError as e:
+        return False, e.code, e.message, metadata
+    except Exception as e:
+        return False, DECRYPT_UNKNOWN_ERROR, str(e), metadata
+
+    return True, DECRYPT_OK, "OK", metadata
+
+
 def read_metadata(input_file: str) -> dict:
     """
     Public API to read file metadata (version, filename, sizes, etc.)
@@ -622,3 +779,24 @@ def read_metadata(input_file: str) -> dict:
             "argon2_par": params.get("argon2_par"),
         }
         return meta
+
+
+# Prefer Rust core if available
+try:
+    from crypto_core_rs import (
+        encrypt_file as _rs_encrypt_file,
+        decrypt_file as _rs_decrypt_file,
+        decrypt_file_ex as _rs_decrypt_file_ex,
+        get_keyfile_hash as _rs_get_keyfile_hash,
+        read_metadata as _rs_read_metadata,
+        verify_file_integrity as _rs_verify_file_integrity,
+    )
+
+    encrypt_file = _rs_encrypt_file
+    decrypt_file = _rs_decrypt_file
+    decrypt_file_ex = _rs_decrypt_file_ex
+    get_keyfile_hash = _rs_get_keyfile_hash
+    read_metadata = _rs_read_metadata
+    verify_file_integrity = _rs_verify_file_integrity
+except Exception:
+    pass
