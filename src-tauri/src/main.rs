@@ -554,9 +554,13 @@ fn read_metadata(req: MetadataRequest) -> Result<MetaInfoDto, String> {
 }
 
 #[tauri::command]
-async fn open_file_dialog(window: tauri::Window) -> Result<Option<String>, String> {
+async fn open_file_dialog(window: tauri::Window, default_path: Option<String>) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let file = window.dialog().file().blocking_pick_file();
+        let mut builder = window.dialog().file();
+        if let Some(path) = default_path {
+            builder = builder.set_directory(path);
+        }
+        let file = builder.blocking_pick_file();
         Ok(file
             .and_then(|p| p.into_path().ok())
             .map(|p| p.to_string_lossy().to_string()))
@@ -566,9 +570,13 @@ async fn open_file_dialog(window: tauri::Window) -> Result<Option<String>, Strin
 }
 
 #[tauri::command]
-async fn open_folder_dialog(window: tauri::Window) -> Result<Option<String>, String> {
+async fn open_folder_dialog(window: tauri::Window, default_path: Option<String>) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let folder = window.dialog().file().blocking_pick_folder();
+        let mut builder = window.dialog().file();
+        if let Some(path) = default_path {
+            builder = builder.set_directory(path);
+        }
+        let folder = builder.blocking_pick_folder();
         Ok(folder
             .and_then(|p| p.into_path().ok())
             .map(|p| p.to_string_lossy().to_string()))
@@ -578,9 +586,21 @@ async fn open_folder_dialog(window: tauri::Window) -> Result<Option<String>, Str
 }
 
 #[tauri::command]
-async fn save_file_dialog(window: tauri::Window) -> Result<Option<String>, String> {
+async fn save_file_dialog(window: tauri::Window, default_path: Option<String>) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let file = window.dialog().file().blocking_save_file();
+        let mut builder = window.dialog().file();
+        if let Some(path) = default_path {
+            let p = Path::new(&path);
+            if let Some(parent) = p.parent() {
+                 builder = builder.set_directory(parent);
+            } else {
+                 builder = builder.set_directory(p);
+            }
+            if let Some(name) = p.file_name() {
+                 builder = builder.set_file_name(name.to_string_lossy());
+            }
+        }
+        let file = builder.blocking_save_file();
         Ok(file
             .and_then(|p| p.into_path().ok())
             .map(|p| p.to_string_lossy().to_string()))

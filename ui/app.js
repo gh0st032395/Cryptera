@@ -104,30 +104,30 @@ function updateMode(mode) {
   if (encFolderBtn) encFolderBtn.disabled = mode !== "folder";
 }
 
-async function pickFile(target) {
+async function pickFile(target, defaultPath = null) {
   if (!invoke) return;
   try {
-    const selected = await invoke("open_file_dialog");
+    const selected = await invoke("open_file_dialog", { defaultPath });
     if (selected) target.value = selected;
   } catch (err) {
     setStatus(String(err));
   }
 }
 
-async function pickFolder(target) {
+async function pickFolder(target, defaultPath = null) {
   if (!invoke) return;
   try {
-    const selected = await invoke("open_folder_dialog");
+    const selected = await invoke("open_folder_dialog", { defaultPath });
     if (selected) target.value = selected;
   } catch (err) {
     setStatus(String(err));
   }
 }
 
-async function pickSave(target) {
+async function pickSave(target, defaultPath = null) {
   if (!invoke) return;
   try {
-    const selected = await invoke("save_file_dialog");
+    const selected = await invoke("save_file_dialog", { defaultPath });
     if (selected) target.value = selected;
   } catch (err) {
     setStatus(String(err));
@@ -182,10 +182,11 @@ function bindEvents() {
     }
   });
   onClick("decOutputBtn", async () => {
+    const currentVal = decOutput.value.trim();
     if (decExtract && decExtract.checked) {
-      await pickFolder(decOutput);
+      await pickFolder(decOutput, currentVal || null);
     } else {
-      await pickSave(decOutput);
+      await pickSave(decOutput, currentVal || null);
     }
   });
   onClick("decKeyfileBtn", () => pickFile(decKeyfile));
@@ -354,6 +355,32 @@ async function checkFileMetadata(path) {
       if (decExtract) {
         decExtract.checked = isContainer;
         setStatus(isContainer ? "Detected Folder: Auto-extract ON" : "Detected File: Auto-extract OFF");
+      }
+
+      // Smart Output Path Logic
+      if (decOutput) {
+        try {
+          const sep = path.includes("\\") ? "\\" : "/";
+          const dir = path.substring(0, path.lastIndexOf(sep));
+          const baseName = path.split(sep).pop();
+          const nameNoExt = baseName.replace(/\.ecf$/i, "");
+
+          let suggested = "";
+          if (isContainer) {
+            // Folder suggestions
+            suggested = `${dir}${sep}${nameNoExt}`;
+          } else {
+            // File suggestion
+            if (meta.filename && meta.filename.trim().length > 0) {
+              suggested = `${dir}${sep}${meta.filename}`;
+            } else {
+              suggested = `${dir}${sep}${nameNoExt}`;
+            }
+          }
+          decOutput.value = suggested;
+        } catch (e) {
+          console.error("Smart path calc failed", e);
+        }
       }
     }
   } catch (err) {
