@@ -126,7 +126,7 @@ body::before {
 
 .app-layout {
   display: grid;
-  grid-template-columns: 260px 1fr;
+  grid-template-columns: 280px 1fr;
   height: 100vh;
   padding-top: 32px;
   /* make space for titlebar */
@@ -136,7 +136,7 @@ body::before {
 .sidebar {
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 32px;
 }
 
 .brand {
@@ -190,7 +190,7 @@ body::before {
   background: var(--panel);
   border: 1px solid var(--line);
   color: var(--text);
-  padding: 12px 16px;
+  padding: 14px 18px;
   border-radius: 14px;
   text-align: left;
   font-family: "Cascadia Code", "Segoe UI", monospace;
@@ -210,7 +210,7 @@ body::before {
 
 .status-card {
   margin-top: auto;
-  padding: 18px;
+  padding: 24px;
   background: rgba(23, 31, 41, 0.75);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
@@ -264,7 +264,7 @@ body::before {
 .main {
   display: flex;
   flex-direction: column;
-  gap: 22px;
+  gap: 32px;
   min-width: 0;
 }
 
@@ -338,20 +338,21 @@ body::before {
 .panel-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 16px;
+  gap: 24px;
 }
 
-background: rgba(23, 31, 41, 0.75);
-backdrop-filter: blur(16px);
--webkit-backdrop-filter: blur(16px);
-border: 1px solid rgba(255, 255, 255, 0.05);
-border-radius: var(--radius);
-padding: 18px;
-box-shadow: var(--shadow);
-animation: rise 0.6s ease;
-min-width: 0;
-transition: transform 0.2s ease,
-box-shadow 0.2s ease;
+.card {
+  background: rgba(23, 31, 41, 0.75);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: var(--radius);
+  padding: 24px;
+  box-shadow: var(--shadow);
+  animation: rise 0.6s ease;
+  min-width: 0;
+  transition: transform 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
 .card:hover {
@@ -372,7 +373,7 @@ box-shadow 0.2s ease;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  margin-bottom: 12px;
+  margin-bottom: 20px;
 }
 
 .field label {
@@ -387,7 +388,7 @@ select {
   background: var(--panel-soft);
   border: 1px solid var(--line);
   color: var(--text);
-  padding: 10px 12px;
+  padding: 12px 16px;
   border-radius: 12px;
   font-size: 14px;
   transition: all 0.2s ease;
@@ -407,7 +408,7 @@ input::placeholder {
 
 .input-row {
   display: flex;
-  gap: 10px;
+  gap: 12px;
   flex-wrap: wrap;
 }
 
