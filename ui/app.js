@@ -527,6 +527,47 @@ async function bindProgressEvents() {
   }
 }
 
+
+function setupTooltips() {
+  const tooltip = document.createElement("div");
+  tooltip.className = "custom-tooltip";
+  tooltip.style.display = "none";
+  document.body.appendChild(tooltip);
+
+  const showTooltip = (e, text) => {
+    tooltip.textContent = text;
+    tooltip.style.display = "block";
+    moveTooltip(e);
+  };
+
+  const moveTooltip = (e) => {
+    const x = e.clientX + 15;
+    const y = e.clientY + 15;
+    // Boundary checks
+    const right = x + tooltip.offsetWidth;
+    const bottom = y + tooltip.offsetHeight;
+
+    let finalX = x;
+    let finalY = y;
+
+    if (right > window.innerWidth) finalX = e.clientX - tooltip.offsetWidth - 10;
+    if (bottom > window.innerHeight) finalY = e.clientY - tooltip.offsetHeight - 10;
+
+    tooltip.style.left = `${finalX}px`;
+    tooltip.style.top = `${finalY}px`;
+  };
+
+  const hideTooltip = () => {
+    tooltip.style.display = "none";
+  };
+
+  document.querySelectorAll("[data-tooltip]").forEach(el => {
+    el.addEventListener("mouseenter", (e) => showTooltip(e, el.getAttribute("data-tooltip")));
+    el.addEventListener("mousemove", moveTooltip);
+    el.addEventListener("mouseleave", hideTooltip);
+  });
+}
+
 function assertTauri() {
   if (!invoke) return false;
   if (!eventApi || !eventApi.listen) return false;
@@ -583,6 +624,7 @@ function bootInit() {
     bindNavigation();
     bindEvents();
     bindProgressEvents();
+    setupTooltips(); // Init tooltips
     if (!assertTauri()) return;
     updateMode("file");
     setProgress(0);
