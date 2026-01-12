@@ -175,7 +175,12 @@ function bindEvents() {
   onClick("encOutputBtn", () => pickSave(encOutput));
   onClick("encKeyfileBtn", () => pickFile(encKeyfile));
 
-  onClick("decFileBtn", () => pickFile(decFile));
+  onClick("decFileBtn", async () => {
+    await pickFile(decFile);
+    if (decFile.value) {
+      checkFileMetadata(decFile.value);
+    }
+  });
   onClick("decOutputBtn", async () => {
     if (decExtract && decExtract.checked) {
       await pickFolder(decOutput);
@@ -325,7 +330,11 @@ function renderMetaTo(target, meta) {
     target.textContent = "No metadata available.";
     return;
   }
+  const isContainer = (meta.flags & 32) !== 0;
+  const typeLabel = isContainer ? "Archive (Folder)" : "Single File";
+
   target.innerHTML = `
+    <div><strong>Type:</strong> ${typeLabel}</div>
     <div><strong>Filename:</strong> ${meta.filename || "(hidden)"}</div>
     <div><strong>Version:</strong> ${meta.version}</div>
     <div><strong>Shard:</strong> ${meta.shard_size} bytes</div>
@@ -333,6 +342,23 @@ function renderMetaTo(target, meta) {
     <div><strong>Plain size:</strong> ${meta.plain_size} bytes</div>
     <div><strong>Stored size:</strong> ${meta.stored_size} bytes</div>
   `;
+}
+
+async function checkFileMetadata(path) {
+  if (!invoke || !path) return;
+  try {
+    const meta = await invoke("read_metadata", { req: { input_file: path } });
+    if (meta) {
+      renderMeta(meta);
+      const isContainer = (meta.flags & 32) !== 0;
+      if (decExtract) {
+        decExtract.checked = isContainer;
+        setStatus(isContainer ? "Detected Folder: Auto-extract ON" : "Detected File: Auto-extract OFF");
+      }
+    }
+  } catch (err) {
+    console.error("Auto-detect failed:", err);
+  }
 }
 
 async function bindProgressEvents() {
