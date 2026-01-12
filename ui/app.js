@@ -22,10 +22,190 @@ const invoke = tauri?.core?.invoke || tauri?.tauri?.invoke || tauri?.invoke;
 const eventApi = tauri?.event || tauri?.core?.event || tauri?.tauri?.event;
 const windowApi = tauri?.window || tauri?.core?.window;
 
+const translations = {
+  en: {
+    nav_encrypt: "Encrypt",
+    nav_decrypt: "Decrypt",
+    nav_verify: "Verify",
+    nav_about: "About",
+    hero_title: "Secure files, fast workflows.",
+    hero_subtitle: "Offline encryption with Rust core. Clean UI, precise control.",
+    metric_engine: "Engine",
+    metric_mode: "Mode",
+    metric_local: "Local Only",
+    panel_encrypt_title: "Encrypt",
+    panel_encrypt_desc: "Protect a file or a folder with strong crypto defaults.",
+    card_source: "Source",
+    seg_file: "File",
+    seg_folder: "Folder",
+    label_file_path: "File path",
+    btn_choose: "Choose",
+    label_folder_path: "Folder path",
+    label_output_file: "Output file",
+    btn_save_as: "Save As",
+    card_security: "Security",
+    label_password: "Password",
+    label_keyfile: "Keyfile (optional)",
+    label_sec_profile: "Security profile",
+    opt_standard: "Standard",
+    opt_strong: "Strong",
+    opt_paranoid: "Paranoid",
+    label_int_profile: "Integrity profile",
+    opt_medium: "Medium",
+    opt_low: "Low",
+    opt_high: "High",
+    opt_max: "Max",
+    card_options: "Options",
+    label_file_comp: "File compression",
+    opt_none: "none",
+    opt_zlib: "zlib",
+    opt_lzma: "lzma",
+    label_folder_comp: "Folder archive compression",
+    opt_gz: "gz",
+    opt_bz2: "bz2",
+    opt_xz: "xz",
+    check_skip_special: "Skip symlinks and special entries",
+    check_pwchk: "Enable password check record",
+    check_hide_filename: "Hide original filename",
+    btn_start_enc: "Start Encryption",
+    panel_decrypt_title: "Decrypt",
+    panel_decrypt_desc: "Recover files and optionally extract archived folders.",
+    label_encrypted_file: "Encrypted file",
+    label_output_path: "Output path",
+    btn_select: "Select",
+    meta_title: "Metadata",
+    meta_empty: "No metadata loaded.",
+    btn_read_meta: "Read Metadata",
+    card_credentials: "Credentials",
+    check_auto_extract: "Auto extract TAR containers",
+    check_keep_tar: "Keep decrypted TAR",
+    btn_start_dec: "Start Decryption",
+    panel_verify_title: "Verify",
+    panel_verify_desc: "Validate integrity without decrypting.",
+    card_target: "Target",
+    btn_run_ver: "Run Verification",
+    panel_about_title: "About",
+    panel_about_desc: "Local security, no compromises.",
+    about_text: "CryptoV2 is a local encryption app based on Rust. Uses AES-GCM and Argon2id with erasure coding for integrity and recovery. No uploads, no external services.",
+    label_language: "Language",
+
+    // Tooltips
+    tooltip_sec_standard: "Argon2id: 3 passes, 64MB RAM. Balanced security (Default).",
+    tooltip_sec_strong: "Argon2id: 6 passes, 256MB RAM. Heavy protection against brute-force.",
+    tooltip_sec_paranoid: "Argon2id: 10 passes, 512MB RAM. Maximum security, slower encryption.",
+    tooltip_int_profile: "Determines how many recovery shards are generated for file redundancy.",
+    tooltip_int_medium: "24 Data / 8 Parity shards. Good balance.",
+    tooltip_int_low: "28 Data / 4 Parity shards. Minimal overhead.",
+    tooltip_int_high: "12 Data / 12 Parity shards. High redundancy (50% overhead).",
+    tooltip_int_max: "8 Data / 24 Parity shards. Maximum redundancy (300% overhead).",
+    tooltip_file_comp: "Compresses the file before encryption to save space.",
+    tooltip_file_comp_none: "No compression. Fastest.",
+    tooltip_file_comp_zlib: "DEFLATE compression. Good for documents.",
+    tooltip_file_comp_lzma: "LZMA compression. Best ratio, slower.",
+    tooltip_folder_comp: "Compresses the TAR archive when encrypting a folder.",
+    tooltip_folder_comp_none: "No compression.",
+    tooltip_folder_comp_gz: "Gzip. Fast and widely compatible.",
+    tooltip_folder_comp_bz2: "Bzip2. Better compression than Gzip.",
+    tooltip_folder_comp_xz: "XZ/LZMA. Best compression, slower.",
+    tooltip_skip_special: "If checked, symbolic links and special device files will be detected and skipped to prevent errors.",
+    tooltip_enable_pwchk: "Adds a hashed check value to the header. Allows validating the password before attempting full decryption.",
+    tooltip_hide_filename: "Stores the original filename inside the encrypted header, so the output file can have a random name.",
+  },
+  it: {
+    nav_encrypt: "Cifra",
+    nav_decrypt: "Decifra",
+    nav_verify: "Verifica",
+    nav_about: "Info",
+    hero_title: "File sicuri, flusso veloce.",
+    hero_subtitle: "Cifratura offline con core Rust. UI pulita, controllo totale.",
+    metric_engine: "Motore",
+    metric_mode: "Modo",
+    metric_local: "Locale",
+    panel_encrypt_title: "Cifra",
+    panel_encrypt_desc: "Proteggi un file o cartella con crittografia forte.",
+    card_source: "Sorgente",
+    seg_file: "File",
+    seg_folder: "Cartella",
+    label_file_path: "Percorso file",
+    btn_choose: "Scegli",
+    label_folder_path: "Percorso cartella",
+    label_output_file: "File output",
+    btn_save_as: "Salva come",
+    card_security: "Sicurezza",
+    label_password: "Password",
+    label_keyfile: "Keyfile (opzionale)",
+    label_sec_profile: "Profilo sicurezza",
+    opt_standard: "Standard",
+    opt_strong: "Forte",
+    opt_paranoid: "Paranoico",
+    label_int_profile: "Profilo integrità",
+    opt_medium: "Medio",
+    opt_low: "Basso",
+    opt_high: "Alto",
+    opt_max: "Max",
+    card_options: "Opzioni",
+    label_file_comp: "Compressione file",
+    opt_none: "nessuna",
+    opt_zlib: "zlib",
+    opt_lzma: "lzma",
+    label_folder_comp: "Compressione archivio",
+    opt_gz: "gz",
+    opt_bz2: "bz2",
+    opt_xz: "xz",
+    check_skip_special: "Salta link simbolici e file speciali",
+    check_pwchk: "Abilita record di controllo password",
+    check_hide_filename: "Nascondi nome file originale",
+    btn_start_enc: "Avvia Cifratura",
+    panel_decrypt_title: "Decifra",
+    panel_decrypt_desc: "Recupera file ed estrai archivi opzionalmente.",
+    label_encrypted_file: "File cifrato",
+    label_output_path: "Percorso output",
+    btn_select: "Seleziona",
+    meta_title: "Metadati",
+    meta_empty: "Nessun metadato caricato.",
+    btn_read_meta: "Leggi Metadati",
+    card_credentials: "Credenziali",
+    check_auto_extract: "Estrai automaticamente container TAR",
+    check_keep_tar: "Mantieni TAR decifrato",
+    btn_start_dec: "Avvia Decifratura",
+    panel_verify_title: "Verifica",
+    panel_verify_desc: "Valida integrità senza decifrare.",
+    card_target: "Target",
+    btn_run_ver: "Esegui Verifica",
+    panel_about_title: "Info",
+    panel_about_desc: "Sicurezza locale, senza compromessi.",
+    about_text: "CryptoV2 è un'app di cifratura locale basata su Rust. Usa AES-GCM e Argon2id con codifica ridondante per integrità e recupero. Nessun upload, nessun servizio esterno.",
+    label_language: "Lingua",
+
+    // Tooltips
+    tooltip_sec_standard: "Argon2id: 3 passaggi, 64MB RAM. Sicurezza bilanciata (Default).",
+    tooltip_sec_strong: "Argon2id: 6 passaggi, 256MB RAM. Protezione pesante contro brute-force.",
+    tooltip_sec_paranoid: "Argon2id: 10 passaggi, 512MB RAM. Massima sicurezza, cifratura più lenta.",
+    tooltip_int_profile: "Determina quanti frammenti di recupero sono generati per ridondanza.",
+    tooltip_int_medium: "24 Dati / 8 Parità. Buon bilanciamento.",
+    tooltip_int_low: "28 Dati / 4 Parità. Overhead minimo.",
+    tooltip_int_high: "12 Dati / 12 Parità. Alta ridondanza (50% overhead).",
+    tooltip_int_max: "8 Dati / 24 Parità. Massima ridondanza (300% overhead).",
+    tooltip_file_comp: "Comprime il file prima di cifrare per risparmiare spazio.",
+    tooltip_file_comp_none: "Nessuna compressione. Più veloce.",
+    tooltip_file_comp_zlib: "Compressione DEFLATE. Buona per documenti.",
+    tooltip_file_comp_lzma: "Compressione LZMA. Miglior ratio, più lento.",
+    tooltip_folder_comp: "Comprime l'archivio TAR quando cifri una cartella.",
+    tooltip_folder_comp_none: "Nessuna compressione.",
+    tooltip_folder_comp_gz: "Gzip. Veloce e ampiamente compatibile.",
+    tooltip_folder_comp_bz2: "Bzip2. Compressione migliore di Gzip.",
+    tooltip_folder_comp_xz: "XZ/LZMA. Compressione migliore, più lenta.",
+    tooltip_skip_special: "Se attivo, link simbolici e file speciali vengono saltati per evitare errori.",
+    tooltip_enable_pwchk: "Aggiunge un valore di hash all'header. Permette di validare la password prima di decifrare.",
+    tooltip_hide_filename: "Salva il nome originale dentro l'header cifrato, così il file di output può avere un nome casuale.",
+  }
+};
+
 const state = {
   busy: false,
   paused: false,
   mode: "file",
+  language: "en",
 };
 
 let encFile = null;
@@ -629,6 +809,39 @@ function setupTooltips() {
   window.attachTooltip = attach;
 }
 
+function updateLanguage(lang) {
+  state.language = lang;
+  const dict = translations[lang] || translations["en"];
+
+  // Update Text
+  document.querySelectorAll("[data-i18n]").forEach(el => {
+    const key = el.getAttribute("data-i18n");
+    if (dict[key]) {
+      el.textContent = dict[key];
+    }
+  });
+
+  // Update Tooltips
+  document.querySelectorAll("[data-i18n-tooltip]").forEach(el => {
+    const key = el.getAttribute("data-i18n-tooltip");
+    if (dict[key]) {
+      el.setAttribute("data-tooltip", dict[key]);
+    }
+  });
+
+  // Update Custom Select Triggers if they match an option
+  document.querySelectorAll(".custom-select").forEach(wrapper => {
+    const input = wrapper.querySelector("input[type='hidden']");
+    const trigger = wrapper.querySelector(".select-trigger");
+    const options = wrapper.querySelectorAll(".option");
+
+    if (input && trigger) {
+      const matchingOpt = Array.from(options).find(o => o.dataset.value === input.value);
+      if (matchingOpt) trigger.textContent = matchingOpt.textContent;
+    }
+  });
+}
+
 function setupCustomSelects() {
   const disconnectOutside = () => {
     document.querySelectorAll(".custom-select.open").forEach(el => el.classList.remove("open"));
@@ -659,7 +872,13 @@ function setupCustomSelects() {
         const val = opt.dataset.value;
         const text = opt.textContent;
 
-        if (input) input.value = val;
+        if (input) {
+          input.value = val;
+          // If this is the language selector, trigger update
+          if (input.id === "languageSelect") {
+            updateLanguage(val);
+          }
+        }
         trigger.textContent = text;
 
         // Visual selection state
@@ -736,6 +955,10 @@ function bootInit() {
     setupTooltips(); // Init tooltips
     setupCustomSelects(); // Init custom selects
     if (!assertBackendApi()) return;
+
+    // Init Language
+    updateLanguage("en");
+
     updateMode("file");
     setProgress(0);
     setBusy(false); // Ensure buttons are correct state

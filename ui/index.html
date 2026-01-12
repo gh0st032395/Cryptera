@@ -36,16 +36,16 @@
     <aside class="sidebar">
       <div class="brand">
         <div class="logo">C2</div>
-          <div class="brand-text">
-            <span class="title">CryptoV2</span>
-            <span class="subtitle">Local Encryption</span>
-          </div>
+        <div class="brand-text">
+          <span class="title">CryptoV2</span>
+          <span class="subtitle">Local Encryption</span>
+        </div>
       </div>
       <nav class="nav">
-        <button class="nav-item active" data-tab="encrypt">Encrypt</button>
-        <button class="nav-item" data-tab="decrypt">Decrypt</button>
-        <button class="nav-item" data-tab="verify">Verify</button>
-        <button class="nav-item" data-tab="about">About</button>
+        <button class="nav-item active" data-tab="encrypt" data-i18n="nav_encrypt">Encrypt</button>
+        <button class="nav-item" data-tab="decrypt" data-i18n="nav_decrypt">Decrypt</button>
+        <button class="nav-item" data-tab="verify" data-i18n="nav_verify">Verify</button>
+        <button class="nav-item" data-tab="about" data-i18n="nav_about">About</button>
       </nav>
       <div class="status-card">
         <div class="status-label">Status</div>
@@ -66,99 +66,102 @@
 
     <main class="main">
       <section class="hero">
-          <div>
-            <h1>Crittografia locale, verificabile, veloce.</h1>
-            <p>Motore Rust, zero cloud, controllo totale su file e cartelle.</p>
-          </div>
+        <div>
+          <h1 data-i18n="hero_title">Secure files, fast workflows.</h1>
+          <p data-i18n="hero_subtitle">Offline encryption with Rust core. Clean UI, precise control.</p>
+        </div>
         <div class="hero-card">
           <div class="metric">
-            <span class="metric-label">Engine</span>
+            <span class="metric-label" data-i18n="metric_engine">Engine</span>
             <span class="metric-value">Rust Core</span>
           </div>
           <div class="metric">
-            <span class="metric-label">Mode</span>
-            <span class="metric-value">Local Only</span>
+            <span class="metric-label" data-i18n="metric_mode">Mode</span>
+            <span class="metric-value" data-i18n="metric_local">Local Only</span>
           </div>
         </div>
       </section>
 
       <section id="panel-encrypt" class="panel active">
         <div class="panel-header">
-          <h2>Encrypt</h2>
-          <p>Protect a file or a folder with strong crypto defaults.</p>
+          <h2 data-i18n="panel_encrypt_title">Encrypt</h2>
+          <p data-i18n="panel_encrypt_desc">Protect a file or a folder with strong crypto defaults.</p>
         </div>
         <div class="panel-grid">
           <div class="card">
-            <div class="card-title">Source</div>
+            <div class="card-title" data-i18n="card_source">Source</div>
             <div class="segmented">
-              <button class="seg active" data-mode="file">File</button>
-              <button class="seg" data-mode="folder">Folder</button>
+              <button class="seg active" data-mode="file" data-i18n="seg_file">File</button>
+              <button class="seg" data-mode="folder" data-i18n="seg_folder">Folder</button>
             </div>
             <div class="field">
-              <label>File path</label>
+              <label data-i18n="label_file_path">File path</label>
               <div class="input-row">
                 <input id="encFile" type="text" placeholder="Select a file" />
-                <button id="encFileBtn" class="primary">Choose</button>
+                <button id="encFileBtn" class="primary" data-i18n="btn_choose">Choose</button>
               </div>
             </div>
             <div class="field">
-              <label>Folder path</label>
+              <label data-i18n="label_folder_path">Folder path</label>
               <div class="input-row">
                 <input id="encFolder" type="text" placeholder="Select a folder" />
-                <button id="encFolderBtn" class="primary">Choose</button>
+                <button id="encFolderBtn" class="primary" data-i18n="btn_choose">Choose</button>
               </div>
             </div>
             <div class="field">
-              <label>Output file</label>
+              <label data-i18n="label_output_file">Output file</label>
               <div class="input-row">
                 <input id="encOutput" type="text" placeholder="Select output" />
-                <button id="encOutputBtn" class="primary">Save As</button>
+                <button id="encOutputBtn" class="primary" data-i18n="btn_save_as">Save As</button>
               </div>
             </div>
           </div>
 
           <div class="card">
-            <div class="card-title">Security</div>
+            <div class="card-title" data-i18n="card_security">Security</div>
             <div class="field">
-              <label>Password</label>
+              <label data-i18n="label_password">Password</label>
               <input id="encPassword" type="password" placeholder="Required" />
             </div>
             <div class="field">
-              <label>Keyfile (optional)</label>
+              <label data-i18n="label_keyfile">Keyfile (optional)</label>
               <div class="input-row">
                 <input id="encKeyfile" type="text" placeholder="Select keyfile" />
-                <button id="encKeyfileBtn" class="primary">Choose</button>
+                <button id="encKeyfileBtn" class="primary" data-i18n="btn_choose">Choose</button>
               </div>
             </div>
             <div class="field">
-              <label>Security profile</label>
+              <label data-i18n="label_sec_profile">Security profile</label>
               <div class="custom-select" id="encSecProfile-wrapper">
                 <input type="hidden" id="encSecProfile" value="Standard">
-                <div class="select-trigger">Standard</div>
+                <div class="select-trigger" data-i18n="opt_standard">Standard</div>
                 <div class="select-options">
-                  <div class="option" data-value="Standard"
+                  <div class="option" data-value="Standard" data-i18n="opt_standard"
+                    data-i18n-tooltip="tooltip_sec_standard"
                     data-tooltip="Argon2id: 3 passes, 64MB RAM. Balanced security (Default).">Standard</div>
-                  <div class="option" data-value="Strong"
+                  <div class="option" data-value="Strong" data-i18n="opt_strong" data-i18n-tooltip="tooltip_sec_strong"
                     data-tooltip="Argon2id: 6 passes, 256MB RAM. heavy protection against brute-force.">Strong</div>
-                  <div class="option" data-value="Paranoid"
+                  <div class="option" data-value="Paranoid" data-i18n="opt_paranoid"
+                    data-i18n-tooltip="tooltip_sec_paranoid"
                     data-tooltip="Argon2id: 10 passes, 512MB RAM. Maximum security, slower encryption.">Paranoid</div>
                 </div>
               </div>
             </div>
             <div class="field">
-              <label data-tooltip="Determines how many recovery shards are generated for file redundancy.">Integrity
+              <label data-i18n="label_int_profile" data-i18n-tooltip="tooltip_int_profile"
+                data-tooltip="Determines how many recovery shards are generated for file redundancy.">Integrity
                 profile</label>
               <div class="custom-select" id="encIntProfile-wrapper">
                 <input type="hidden" id="encIntProfile" value="Medium">
-                <div class="select-trigger">Medium</div>
+                <div class="select-trigger" data-i18n="opt_medium">Medium</div>
                 <div class="select-options">
-                  <div class="option" data-value="Medium" data-tooltip="24 Data / 8 Parity shards. Good balance.">Medium
-                  </div>
-                  <div class="option" data-value="Low" data-tooltip="28 Data / 4 Parity shards. minimal overhead.">Low
-                  </div>
-                  <div class="option" data-value="High"
+                  <div class="option" data-value="Medium" data-i18n="opt_medium" data-i18n-tooltip="tooltip_int_medium"
+                    data-tooltip="24 Data / 8 Parity shards. Good balance.">Medium</div>
+                  <div class="option" data-value="Low" data-i18n="opt_low" data-i18n-tooltip="tooltip_int_low"
+                    data-tooltip="28 Data / 4 Parity shards. minimal overhead.">Low</div>
+                  <div class="option" data-value="High" data-i18n="opt_high" data-i18n-tooltip="tooltip_int_high"
                     data-tooltip="12 Data / 12 Parity shards. High redundancy (50% overhead).">High</div>
-                  <div class="option" data-value="Max"
+                  <div class="option" data-value="Max" data-i18n="opt_max" data-i18n-tooltip="tooltip_int_max"
                     data-tooltip="8 Data / 24 Parity shards. Maximum redundancy (300% overhead).">Max</div>
                 </div>
               </div>
@@ -166,170 +169,191 @@
           </div>
 
           <div class="card">
-            <div class="card-title">Options</div>
+            <div class="card-title" data-i18n="card_options">Options</div>
             <div class="field">
-              <label data-tooltip="Compresses the file before encryption to save space.">File compression</label>
+              <label data-i18n="label_file_comp" data-i18n-tooltip="tooltip_file_comp"
+                data-tooltip="Compresses the file before encryption to save space.">File compression</label>
               <div class="custom-select" id="encFileComp-wrapper">
                 <input type="hidden" id="encFileComp" value="none">
-                <div class="select-trigger">none</div>
+                <div class="select-trigger" data-i18n="opt_none">none</div>
                 <div class="select-options">
-                  <div class="option" data-value="none" data-tooltip="No compression. Fastest.">none</div>
-                  <div class="option" data-value="zlib" data-tooltip="DEFLATE compression. Good for documents.">zlib
-                  </div>
-                  <div class="option" data-value="lzma" data-tooltip="LZMA compression. Best ratio, slower.">lzma</div>
+                  <div class="option" data-value="none" data-i18n="opt_none" data-i18n-tooltip="tooltip_file_comp_none"
+                    data-tooltip="No compression. Fastest.">none</div>
+                  <div class="option" data-value="zlib" data-i18n="opt_zlib" data-i18n-tooltip="tooltip_file_comp_zlib"
+                    data-tooltip="DEFLATE compression. Good for documents.">zlib</div>
+                  <div class="option" data-value="lzma" data-i18n="opt_lzma" data-i18n-tooltip="tooltip_file_comp_lzma"
+                    data-tooltip="LZMA compression. Best ratio, slower.">lzma</div>
                 </div>
               </div>
             </div>
             <div class="field">
-              <label data-tooltip="Compresses the TAR archive when encrypting a folder.">Folder archive
+              <label data-i18n="label_folder_comp" data-i18n-tooltip="tooltip_folder_comp"
+                data-tooltip="Compresses the TAR archive when encrypting a folder.">Folder archive
                 compression</label>
               <div class="custom-select" id="encFolderComp-wrapper">
                 <input type="hidden" id="encFolderComp" value="none">
-                <div class="select-trigger">none</div>
+                <div class="select-trigger" data-i18n="opt_none">none</div>
                 <div class="select-options">
-                  <div class="option" data-value="none" data-tooltip="No compression.">none</div>
-                  <div class="option" data-value="gz" data-tooltip="Gzip. Fast and widely compatible.">gz</div>
-                  <div class="option" data-value="bz2" data-tooltip="Bzip2. Better compression than Gzip.">bz2</div>
-                  <div class="option" data-value="xz" data-tooltip="XZ/LZMA. Best compression, slower.">xz</div>
+                  <div class="option" data-value="none" data-i18n="opt_none"
+                    data-i18n-tooltip="tooltip_folder_comp_none" data-tooltip="No compression.">none</div>
+                  <div class="option" data-value="gz" data-i18n="opt_gz" data-i18n-tooltip="tooltip_folder_comp_gz"
+                    data-tooltip="Gzip. Fast and widely compatible.">gz</div>
+                  <div class="option" data-value="bz2" data-i18n="opt_bz2" data-i18n-tooltip="tooltip_folder_comp_bz2"
+                    data-tooltip="Bzip2. Better compression than Gzip.">bz2</div>
+                  <div class="option" data-value="xz" data-i18n="opt_xz" data-i18n-tooltip="tooltip_folder_comp_xz"
+                    data-tooltip="XZ/LZMA. Best compression, slower.">xz</div>
                 </div>
               </div>
             </div>
-            <div class="checkbox"
+            <div class="checkbox" data-i18n-tooltip="tooltip_skip_special"
               data-tooltip="If checked, symbolic links and special device files will be detected and skipped to prevent errors.">
               <input id="encSkipSpecial" type="checkbox" checked />
-              <label for="encSkipSpecial">Skip symlinks and special entries</label>
+              <label for="encSkipSpecial" data-i18n="check_skip_special">Skip symlinks and special entries</label>
             </div>
-            <div class="checkbox"
+            <div class="checkbox" data-i18n-tooltip="tooltip_enable_pwchk"
               data-tooltip="Adds a hashed check value to the header. Allows validating the password before attempting full decryption.">
               <input id="encEnablePwchk" type="checkbox" checked />
-              <label for="encEnablePwchk">Enable password check record</label>
+              <label for="encEnablePwchk" data-i18n="check_pwchk">Enable password check record</label>
             </div>
-            <div class="checkbox"
+            <div class="checkbox" data-i18n-tooltip="tooltip_hide_filename"
               data-tooltip="Stores the original filename inside the encrypted header, so the output file can have a random name.">
               <input id="encHideFilename" type="checkbox" />
-              <label for="encHideFilename">Hide original filename</label>
+              <label for="encHideFilename" data-i18n="check_hide_filename">Hide original filename</label>
             </div>
           </div>
         </div>
         <div class="panel-actions">
-          <button id="encryptBtn" class="cta">Start Encryption</button>
+          <button id="encryptBtn" class="cta" data-i18n="btn_start_enc">Start Encryption</button>
         </div>
       </section>
 
       <section id="panel-decrypt" class="panel">
         <div class="panel-header">
-          <h2>Decrypt</h2>
-          <p>Recover files and optionally extract archived folders.</p>
+          <h2 data-i18n="panel_decrypt_title">Decrypt</h2>
+          <p data-i18n="panel_decrypt_desc">Recover files and optionally extract archived folders.</p>
         </div>
         <div class="panel-grid">
           <div class="card">
-            <div class="card-title">Source</div>
+            <div class="card-title" data-i18n="card_source">Source</div>
             <div class="field">
-              <label>Encrypted file</label>
+              <label data-i18n="label_encrypted_file">Encrypted file</label>
               <div class="input-row">
                 <input id="decFile" type="text" placeholder="Select a file" />
-                <button id="decFileBtn" class="primary">Choose</button>
+                <button id="decFileBtn" class="primary" data-i18n="btn_choose">Choose</button>
               </div>
             </div>
             <div class="field">
-              <label>Output path</label>
+              <label data-i18n="label_output_path">Output path</label>
               <div class="input-row">
                 <input id="decOutput" type="text" placeholder="Folder or file" />
-                <button id="decOutputBtn" class="primary">Select</button>
+                <button id="decOutputBtn" class="primary" data-i18n="btn_select">Select</button>
               </div>
             </div>
             <div class="meta-box" id="metaBox">
-              <div class="meta-title">Metadata</div>
-              <div id="metaContent" class="meta-content">No metadata loaded.</div>
+              <div class="meta-title" data-i18n="meta_title">Metadata</div>
+              <div id="metaContent" class="meta-content" data-i18n="meta_empty">No metadata loaded.</div>
             </div>
-            <button id="readMetaBtn" class="secondary">Read Metadata</button>
+            <button id="readMetaBtn" class="secondary" data-i18n="btn_read_meta">Read Metadata</button>
           </div>
 
           <div class="card">
-            <div class="card-title">Credentials</div>
+            <div class="card-title" data-i18n="card_credentials">Credentials</div>
             <div class="field">
-              <label>Password</label>
+              <label data-i18n="label_password">Password</label>
               <input id="decPassword" type="password" placeholder="Required" />
             </div>
             <div class="field">
-              <label>Keyfile (optional)</label>
+              <label data-i18n="label_keyfile">Keyfile (optional)</label>
               <div class="input-row">
                 <input id="decKeyfile" type="text" placeholder="Select keyfile" />
-                <button id="decKeyfileBtn" class="primary">Choose</button>
+                <button id="decKeyfileBtn" class="primary" data-i18n="btn_choose">Choose</button>
               </div>
             </div>
             <div class="checkbox">
               <input id="decExtract" type="checkbox" checked />
-              <label for="decExtract">Auto extract TAR containers</label>
+              <label for="decExtract" data-i18n="check_auto_extract">Auto extract TAR containers</label>
             </div>
             <div class="checkbox">
               <input id="decKeepTar" type="checkbox" />
-              <label for="decKeepTar">Keep decrypted TAR</label>
+              <label for="decKeepTar" data-i18n="check_keep_tar">Keep decrypted TAR</label>
             </div>
           </div>
         </div>
         <div class="panel-actions">
-          <button id="decryptBtn" class="cta">Start Decryption</button>
+          <button id="decryptBtn" class="cta" data-i18n="btn_start_dec">Start Decryption</button>
         </div>
       </section>
 
       <section id="panel-verify" class="panel">
         <div class="panel-header">
-          <h2>Verify</h2>
-          <p>Validate integrity without decrypting.</p>
+          <h2 data-i18n="panel_verify_title">Verify</h2>
+          <p data-i18n="panel_verify_desc">Validate integrity without decrypting.</p>
         </div>
         <div class="panel-grid">
           <div class="card">
-            <div class="card-title">Target</div>
+            <div class="card-title" data-i18n="card_target">Target</div>
             <div class="field">
-              <label>Encrypted file</label>
+              <label data-i18n="label_encrypted_file">Encrypted file</label>
               <div class="input-row">
                 <input id="verFile" type="text" placeholder="Select a file" />
-                <button id="verFileBtn" class="primary">Choose</button>
+                <button id="verFileBtn" class="primary" data-i18n="btn_choose">Choose</button>
               </div>
             </div>
             <div class="meta-box" id="verMetaBox">
-              <div class="meta-title">Metadata</div>
-              <div id="verMetaContent" class="meta-content">No metadata loaded.</div>
+              <div class="meta-title" data-i18n="meta_title">Metadata</div>
+              <div id="verMetaContent" class="meta-content" data-i18n="meta_empty">No metadata loaded.</div>
             </div>
-            <button id="readVerifyMetaBtn" class="secondary">Read Metadata</button>
+            <button id="readVerifyMetaBtn" class="secondary" data-i18n="btn_read_meta">Read Metadata</button>
           </div>
           <div class="card">
-            <div class="card-title">Credentials</div>
+            <div class="card-title" data-i18n="card_credentials">Credentials</div>
             <div class="field">
-              <label>Password</label>
+              <label data-i18n="label_password">Password</label>
               <input id="verPassword" type="password" placeholder="Required" />
             </div>
             <div class="field">
-              <label>Keyfile (optional)</label>
+              <label data-i18n="label_keyfile">Keyfile (optional)</label>
               <div class="input-row">
                 <input id="verKeyfile" type="text" placeholder="Select keyfile" />
-                <button id="verKeyfileBtn" class="primary">Choose</button>
+                <button id="verKeyfileBtn" class="primary" data-i18n="btn_choose">Choose</button>
               </div>
             </div>
           </div>
         </div>
         <div class="panel-actions">
-          <button id="verifyBtn" class="cta">Run Verification</button>
+          <button id="verifyBtn" class="cta" data-i18n="btn_run_ver">Run Verification</button>
         </div>
       </section>
 
       <section id="panel-about" class="panel">
-          <div class="panel-header">
-            <h2>About</h2>
-            <p>Sicurezza locale, senza compromessi.</p>
+        <div class="panel-header">
+          <h2 data-i18n="panel_about_title">About</h2>
+          <p data-i18n="panel_about_desc">Sicurezza locale, senza compromessi.</p>
+        </div>
+        <div class="card wide">
+          <div class="card-title">CryptoV2</div>
+          <p data-i18n="about_text">
+            CryptoV2 e' un'app di cifratura locale basata su Rust. Usa AES-GCM e Argon2id con
+            codifica ridondante per integrita' e recupero. Nessun upload, nessun servizio esterno.
+          </p>
+          <div class="pill-row">
+            <span class="pill">AES-256-GCM</span>
+            <span class="pill">Argon2id</span>
+            <span class="pill">FEC</span>
           </div>
-          <div class="card wide">
-            <div class="card-title">CryptoV2</div>
-            <p>
-              CryptoV2 e' un'app di cifratura locale basata su Rust. Usa AES-GCM e Argon2id con
-              codifica ridondante per integrita' e recupero. Nessun upload, nessun servizio esterno.
-            </p>
-            <div class="pill-row">
-              <span class="pill">AES-256-GCM</span>
-              <span class="pill">Argon2id</span>
-              <span class="pill">FEC</span>
+          <div style="margin-top: 24px;">
+            <div class="field" style="width: 200px;">
+              <label data-i18n="label_language">Language</label>
+              <div class="custom-select" id="languageSelect-wrapper">
+                <input type="hidden" id="languageSelect" value="en">
+                <div class="select-trigger">English</div>
+                <div class="select-options">
+                  <div class="option" data-value="en">English</div>
+                  <div class="option" data-value="it">Italiano</div>
+                </div>
+              </div>
             </div>
+          </div>
         </div>
       </section>
     </main>
