@@ -36,10 +36,10 @@
     <aside class="sidebar">
       <div class="brand">
         <div class="logo">C2</div>
-        <div class="brand-text">
-          <span class="title">CryptoV2</span>
-          <span class="subtitle">Tauri Edition</span>
-        </div>
+          <div class="brand-text">
+            <span class="title">CryptoV2</span>
+            <span class="subtitle">Local Encryption</span>
+          </div>
       </div>
       <nav class="nav">
         <button class="nav-item active" data-tab="encrypt">Encrypt</button>
@@ -66,10 +66,10 @@
 
     <main class="main">
       <section class="hero">
-        <div>
-          <h1>Secure files, fast workflows.</h1>
-          <p>Offline encryption with Rust core. Clean UI, precise control.</p>
-        </div>
+          <div>
+            <h1>Crittografia locale, verificabile, veloce.</h1>
+            <p>Motore Rust, zero cloud, controllo totale su file e cartelle.</p>
+          </div>
         <div class="hero-card">
           <div class="metric">
             <span class="metric-label">Engine</span>
@@ -78,10 +78,6 @@
           <div class="metric">
             <span class="metric-label">Mode</span>
             <span class="metric-value">Local Only</span>
-          </div>
-          <div class="metric">
-            <span class="metric-label">UI</span>
-            <span class="metric-value">Tauri</span>
           </div>
         </div>
       </section>
@@ -319,22 +315,21 @@
       </section>
 
       <section id="panel-about" class="panel">
-        <div class="panel-header">
-          <h2>About</h2>
-          <p>Security-first local encryption.</p>
-        </div>
-        <div class="card wide">
-          <div class="card-title">CryptoV2</div>
-          <p>
-            Built on a Rust core with AES-GCM, Argon2id and erasure coding.
-            All operations run locally. No external services or uploads.
-          </p>
-          <div class="pill-row">
-            <span class="pill">AES-256-GCM</span>
-            <span class="pill">Argon2id</span>
-            <span class="pill">FEC</span>
-            <span class="pill">Tauri</span>
+          <div class="panel-header">
+            <h2>About</h2>
+            <p>Sicurezza locale, senza compromessi.</p>
           </div>
+          <div class="card wide">
+            <div class="card-title">CryptoV2</div>
+            <p>
+              CryptoV2 e' un'app di cifratura locale basata su Rust. Usa AES-GCM e Argon2id con
+              codifica ridondante per integrita' e recupero. Nessun upload, nessun servizio esterno.
+            </p>
+            <div class="pill-row">
+              <span class="pill">AES-256-GCM</span>
+              <span class="pill">Argon2id</span>
+              <span class="pill">FEC</span>
+            </div>
         </div>
       </section>
     </main>

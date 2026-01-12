@@ -675,7 +675,7 @@ function setupCustomSelects() {
   });
 }
 
-function assertTauri() {
+function assertBackendApi() {
   if (!invoke) return false;
   if (!eventApi || !eventApi.listen) return false;
   return true;
@@ -735,7 +735,7 @@ function bootInit() {
     bindProgressEvents();
     setupTooltips(); // Init tooltips
     setupCustomSelects(); // Init custom selects
-    if (!assertTauri()) return;
+    if (!assertBackendApi()) return;
     updateMode("file");
     setProgress(0);
     setBusy(false); // Ensure buttons are correct state
