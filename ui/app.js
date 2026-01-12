@@ -408,7 +408,22 @@ function handleReset() {
   updateMode("file");
 
   // Reset Panels (Visual only, default to Encrypt)
+  // Reset Panels (Visual only, default to Encrypt)
   document.querySelector('.nav-item[data-tab="encrypt"]').click();
+
+  // Reset Custom Select Visuals
+  document.querySelectorAll(".custom-select").forEach(wrapper => {
+    const input = wrapper.querySelector("input[type='hidden']");
+    const trigger = wrapper.querySelector(".select-trigger");
+    const options = wrapper.querySelectorAll(".option");
+
+    // Reset trigger text
+    if (input && trigger) {
+      // Find the option that matches the current input value (which was just reset)
+      const matchingOpt = Array.from(options).find(o => o.dataset.value === input.value);
+      if (matchingOpt) trigger.textContent = matchingOpt.textContent;
+    }
+  });
 }
 
 function renderMeta(meta) {
@@ -548,6 +563,8 @@ function setupTooltips() {
   tooltip.style.display = "none";
   document.body.appendChild(tooltip);
 
+  let timer = null;
+
   const showTooltip = (e, text) => {
     tooltip.textContent = text;
     tooltip.style.display = "block";
@@ -573,12 +590,88 @@ function setupTooltips() {
 
   const hideTooltip = () => {
     tooltip.style.display = "none";
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
   };
 
-  document.querySelectorAll("[data-tooltip]").forEach(el => {
-    el.addEventListener("mouseenter", (e) => showTooltip(e, el.getAttribute("data-tooltip")));
-    el.addEventListener("mousemove", moveTooltip);
+  const attach = (el) => {
+    // Remove old listeners to prevent duplicates if re-running
+    // (Ideally we handle this cleanly, but a quick dirty way is acceptable for this scope 
+    // or we just trust 'once' or aggressive replacement. 
+    // Here we will just add new ones assuming fresh elements or simple DOM)
+
+    el.addEventListener("mouseenter", (e) => {
+      const text = el.getAttribute("data-tooltip");
+      if (!text) return;
+
+      timer = setTimeout(() => {
+        showTooltip(e, text);
+      }, 600); // 600ms delay
+    });
+
+    el.addEventListener("mousemove", (e) => {
+      // If tooltip is visible, move it
+      if (tooltip.style.display === "block") {
+        moveTooltip(e);
+      }
+    });
+
     el.addEventListener("mouseleave", hideTooltip);
+    el.addEventListener("mousedown", hideTooltip);
+  };
+
+  // Initial attach
+  document.querySelectorAll("[data-tooltip]").forEach(attach);
+
+  // Expose attach for dynamic elements
+  window.attachTooltip = attach;
+}
+
+function setupCustomSelects() {
+  const disconnectOutside = () => {
+    document.querySelectorAll(".custom-select.open").forEach(el => el.classList.remove("open"));
+  };
+
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest(".custom-select")) {
+      disconnectOutside();
+    }
+  });
+
+  document.querySelectorAll(".custom-select").forEach(wrapper => {
+    const trigger = wrapper.querySelector(".select-trigger");
+    const input = wrapper.querySelector("input[type='hidden']");
+    const options = wrapper.querySelectorAll(".option");
+
+    trigger.addEventListener("click", () => {
+      // Close others
+      document.querySelectorAll(".custom-select.open").forEach(el => {
+        if (el !== wrapper) el.classList.remove("open");
+      });
+      wrapper.classList.toggle("open");
+    });
+
+    options.forEach(opt => {
+      opt.addEventListener("click", (e) => {
+        e.stopPropagation(); // prevent bubbling to wrapper
+        const val = opt.dataset.value;
+        const text = opt.textContent;
+
+        if (input) input.value = val;
+        trigger.textContent = text;
+
+        // Visual selection state
+        options.forEach(o => o.classList.remove("selected"));
+        opt.classList.add("selected");
+
+        wrapper.classList.remove("open");
+      });
+
+      // Attach tooltip logic to options since they are dynamic-ish
+      if (window.attachTooltip) window.attachTooltip(opt);
+    });
   });
 }
 
@@ -639,7 +732,9 @@ function bootInit() {
     bindWindowControls();
     bindEvents();
     bindProgressEvents();
+    bindProgressEvents();
     setupTooltips(); // Init tooltips
+    setupCustomSelects(); // Init custom selects
     if (!assertTauri()) return;
     updateMode("file");
     setProgress(0);

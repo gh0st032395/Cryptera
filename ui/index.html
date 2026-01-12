@@ -136,21 +136,36 @@
             </div>
             <div class="field">
               <label>Security profile</label>
-              <select id="encSecProfile">
-                <option title="Argon2id: 3 passes, 64MB RAM. Balanced security (Default).">Standard</option>
-                <option title="Argon2id: 6 passes, 256MB RAM. heavy protection against brute-force.">Strong</option>
-                <option title="Argon2id: 10 passes, 512MB RAM. Maximum security, slower encryption.">Paranoid</option>
-              </select>
+              <div class="custom-select" id="encSecProfile-wrapper">
+                <input type="hidden" id="encSecProfile" value="Standard">
+                <div class="select-trigger">Standard</div>
+                <div class="select-options">
+                  <div class="option" data-value="Standard"
+                    data-tooltip="Argon2id: 3 passes, 64MB RAM. Balanced security (Default).">Standard</div>
+                  <div class="option" data-value="Strong"
+                    data-tooltip="Argon2id: 6 passes, 256MB RAM. heavy protection against brute-force.">Strong</div>
+                  <div class="option" data-value="Paranoid"
+                    data-tooltip="Argon2id: 10 passes, 512MB RAM. Maximum security, slower encryption.">Paranoid</div>
+                </div>
+              </div>
             </div>
             <div class="field">
               <label data-tooltip="Determines how many recovery shards are generated for file redundancy.">Integrity
                 profile</label>
-              <select id="encIntProfile">
-                <option title="24 Data / 8 Parity shards. Good balance.">Medium</option>
-                <option title="28 Data / 4 Parity shards. minimal overhead.">Low</option>
-                <option title="12 Data / 12 Parity shards. High redundancy (50% overhead).">High</option>
-                <option title="8 Data / 24 Parity shards. Maximum redundancy (300% overhead).">Max</option>
-              </select>
+              <div class="custom-select" id="encIntProfile-wrapper">
+                <input type="hidden" id="encIntProfile" value="Medium">
+                <div class="select-trigger">Medium</div>
+                <div class="select-options">
+                  <div class="option" data-value="Medium" data-tooltip="24 Data / 8 Parity shards. Good balance.">Medium
+                  </div>
+                  <div class="option" data-value="Low" data-tooltip="28 Data / 4 Parity shards. minimal overhead.">Low
+                  </div>
+                  <div class="option" data-value="High"
+                    data-tooltip="12 Data / 12 Parity shards. High redundancy (50% overhead).">High</div>
+                  <div class="option" data-value="Max"
+                    data-tooltip="8 Data / 24 Parity shards. Maximum redundancy (300% overhead).">Max</div>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -158,21 +173,30 @@
             <div class="card-title">Options</div>
             <div class="field">
               <label data-tooltip="Compresses the file before encryption to save space.">File compression</label>
-              <select id="encFileComp">
-                <option value="none" title="No compression. Fastest.">none</option>
-                <option value="zlib" title="DEFLATE compression. Good for documents.">zlib</option>
-                <option value="lzma" title="LZMA compression. Best ratio, slower.">lzma</option>
-              </select>
+              <div class="custom-select" id="encFileComp-wrapper">
+                <input type="hidden" id="encFileComp" value="none">
+                <div class="select-trigger">none</div>
+                <div class="select-options">
+                  <div class="option" data-value="none" data-tooltip="No compression. Fastest.">none</div>
+                  <div class="option" data-value="zlib" data-tooltip="DEFLATE compression. Good for documents.">zlib
+                  </div>
+                  <div class="option" data-value="lzma" data-tooltip="LZMA compression. Best ratio, slower.">lzma</div>
+                </div>
+              </div>
             </div>
             <div class="field">
               <label data-tooltip="Compresses the TAR archive when encrypting a folder.">Folder archive
                 compression</label>
-              <select id="encFolderComp">
-                <option value="none" title="No compression.">none</option>
-                <option value="gz" title="Gzip. Fast and widely compatible.">gz</option>
-                <option value="bz2" title="Bzip2. Better compression than Gzip.">bz2</option>
-                <option value="xz" title="XZ/LZMA. Best compression, slower.">xz</option>
-              </select>
+              <div class="custom-select" id="encFolderComp-wrapper">
+                <input type="hidden" id="encFolderComp" value="none">
+                <div class="select-trigger">none</div>
+                <div class="select-options">
+                  <div class="option" data-value="none" data-tooltip="No compression.">none</div>
+                  <div class="option" data-value="gz" data-tooltip="Gzip. Fast and widely compatible.">gz</div>
+                  <div class="option" data-value="bz2" data-tooltip="Bzip2. Better compression than Gzip.">bz2</div>
+                  <div class="option" data-value="xz" data-tooltip="XZ/LZMA. Best compression, slower.">xz</div>
+                </div>
+              </div>
             </div>
             <div class="checkbox"
               data-tooltip="If checked, symbolic links and special device files will be detected and skipped to prevent errors.">
