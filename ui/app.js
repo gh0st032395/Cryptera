@@ -170,9 +170,43 @@ function bindEvents() {
     });
   };
 
-  onClick("encFileBtn", () => pickFile(encFile));
-  onClick("encFolderBtn", () => pickFolder(encFolder));
-  onClick("encOutputBtn", () => pickSave(encOutput));
+  onClick("encFileBtn", async () => {
+    await pickFile(encFile);
+    if (encFile.value && encOutput) {
+      try {
+        const path = encFile.value.trim();
+        const sep = path.includes("\\") ? "\\" : "/";
+        const lastDot = path.lastIndexOf(".");
+        let suggested = "";
+        if (lastDot > path.lastIndexOf(sep)) {
+          // Replace extension
+          suggested = path.substring(0, lastDot) + ".ecf";
+        } else {
+          // Append extension
+          suggested = path + ".ecf";
+        }
+        encOutput.value = suggested;
+      } catch (e) {
+        console.error("Smart enc path failed", e);
+      }
+    }
+  });
+  onClick("encFolderBtn", async () => {
+    await pickFolder(encFolder);
+    if (encFolder.value && encOutput) {
+      try {
+        const path = encFolder.value.trim();
+        // For folder, typically just append .ecf
+        encOutput.value = path + ".ecf";
+      } catch (e) {
+        console.error("Smart enc path failed", e);
+      }
+    }
+  });
+  onClick("encOutputBtn", async () => {
+    const currentVal = encOutput.value.trim();
+    await pickSave(encOutput, currentVal || null);
+  });
   onClick("encKeyfileBtn", () => pickFile(encKeyfile));
 
   onClick("decFileBtn", async () => {
