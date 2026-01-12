@@ -20,6 +20,7 @@ window.addEventListener("unhandledrejection", (e) => {
 const tauri = window.__TAURI__ || {};
 const invoke = tauri?.core?.invoke || tauri?.tauri?.invoke || tauri?.invoke;
 const eventApi = tauri?.event || tauri?.core?.event || tauri?.tauri?.event;
+const windowApi = tauri?.window || tauri?.core?.window;
 
 const state = {
   busy: false,
@@ -140,6 +141,19 @@ function bindNavigation() {
       });
     });
   });
+}
+
+function bindWindowControls() {
+  if (!windowApi) {
+    console.error("Window API not found");
+    return;
+  }
+  const appWindow = windowApi.getCurrentWindow();
+  if (!appWindow) return;
+
+  document.getElementById("titlebar-minimize")?.addEventListener("click", () => appWindow.minimize());
+  document.getElementById("titlebar-maximize")?.addEventListener("click", () => appWindow.toggleMaximize());
+  document.getElementById("titlebar-close")?.addEventListener("click", () => appWindow.close());
 }
 
 function bindEvents() {
@@ -622,6 +636,7 @@ function bootInit() {
     verKeyfile = document.getElementById("verKeyfile");
 
     bindNavigation();
+    bindWindowControls();
     bindEvents();
     bindProgressEvents();
     setupTooltips(); // Init tooltips

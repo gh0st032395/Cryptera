@@ -48,6 +48,71 @@ body {
   /* sleek scroll */
 }
 
+/* Custom Titlebar */
+.titlebar {
+  height: 32px;
+  background: rgba(11, 15, 20, 0.9);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  user-select: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.titlebar-logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 12px;
+  font-size: 13px;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.logo-icon-sm {
+  width: 14px;
+  height: 14px;
+  background: var(--accent);
+  border-radius: 4px;
+  box-shadow: 0 0 8px rgba(53, 208, 161, 0.4);
+}
+
+.titlebar-controls {
+  display: flex;
+  height: 100%;
+}
+
+.titlebar-button {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 44px;
+  height: 100%;
+  color: var(--muted);
+  transition: background 0.2s;
+}
+
+.titlebar-button svg {
+  fill: currentColor;
+}
+
+.titlebar-button:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text);
+}
+
+.titlebar-button.close:hover {
+  background: #e74c3c;
+  color: white;
+}
+
 body::before {
   content: "";
   position: fixed;
@@ -59,13 +124,13 @@ body::before {
   pointer-events: none;
 }
 
-.app {
+.app-layout {
   display: grid;
-  grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
-  gap: 24px;
-  padding: 28px;
-  position: relative;
-  z-index: 1;
+  grid-template-columns: 260px 1fr;
+  height: 100vh;
+  padding-top: 32px;
+  /* make space for titlebar */
+  overflow: hidden;
 }
 
 .sidebar {

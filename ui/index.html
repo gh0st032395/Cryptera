@@ -9,7 +9,30 @@
 </head>
 
 <body>
-  <div class="app">
+  <div data-tauri-drag-region class="titlebar">
+    <div class="titlebar-logo">
+      <div class="logo-icon-sm"></div>
+      <span>CryptoV2</span>
+    </div>
+    <div class="titlebar-controls">
+      <div class="titlebar-button" id="titlebar-minimize">
+        <svg width="10" height="1" viewBox="0 0 10 1">
+          <path d="M0 0h10v1H0z" />
+        </svg>
+      </div>
+      <div class="titlebar-button" id="titlebar-maximize">
+        <svg width="10" height="10" viewBox="0 0 10 10">
+          <path d="M1,1v8h8V1H1z M0,0h10v10H0V0z" />
+        </svg>
+      </div>
+      <div class="titlebar-button close" id="titlebar-close">
+        <svg width="10" height="10" viewBox="0 0 10 10">
+          <path d="M1,0L0,1L4,5L0,9L1,10L5,6L9,10L10,9L6,5L10,1L9,0L5,4L1,0z" />
+        </svg>
+      </div>
+    </div>
+  </div>
+  <div class="app-layout">
     <aside class="sidebar">
       <div class="brand">
         <div class="logo">C2</div>
