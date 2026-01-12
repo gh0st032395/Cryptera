@@ -44,8 +44,8 @@ body {
     radial-gradient(circle at 20% 80%, rgba(74, 168, 255, 0.15), transparent 45%),
     linear-gradient(120deg, #0b0f14, #0f141c 40%, #0c1117 100%);
   min-height: 100vh;
-  overflow-y: overlay;
   /* sleek scroll */
+  overflow: hidden;
 }
 
 /* Custom Titlebar */
@@ -137,6 +137,7 @@ body::before {
   display: flex;
   flex-direction: column;
   gap: 32px;
+  height: 100%;
 }
 
 .brand {
@@ -266,6 +267,8 @@ body::before {
   flex-direction: column;
   gap: 32px;
   min-width: 0;
+  overflow-y: overlay;
+  padding-bottom: 32px;
 }
 
 .hero {
