@@ -66,7 +66,7 @@ const translations = {
     opt_xz: "XZ (Best)",
     check_skip_special: "exclude symbolic links & system files",
     check_pwchk: "Enable fast password verification",
-    check_hide_filename: "Obfuscate original filename in header",
+    check_hide_filename: "Do not store filename (Anonymous Mode)",
     btn_start_enc: "Execute Encryption",
     panel_decrypt_title: "Decryption",
     panel_decrypt_desc: "Restore original data from encrypted containers.",
@@ -109,7 +109,7 @@ const translations = {
     tooltip_folder_comp_xz: "XZ/LZMA compression. Maximum reduction, higher CPU usage.",
     tooltip_skip_special: "Prevents errors by skipping symbolic links, sockets, and device nodes.",
     tooltip_enable_pwchk: "Stores a hash in the header to confirm password correctness instantly before decryption.",
-    tooltip_hide_filename: "Encrypts the original filename inside the header. output file will need a random name.",
+    tooltip_hide_filename: "Prevents storing the original filename in the header. You will need to rename the decrypted file manually.",
   },
   it: {
     nav_encrypt: "Cifra",
@@ -154,7 +154,7 @@ const translations = {
     opt_xz: "XZ (Best)",
     check_skip_special: "Escludi link simbolici e file di sistema",
     check_pwchk: "Abilita verifica rapida password",
-    check_hide_filename: "Offusca nome originale nel file cifrato",
+    check_hide_filename: "Non salvare il nome file (Anonimo)",
     btn_start_enc: "Esegui Cifratura",
     panel_decrypt_title: "Decifratura",
     panel_decrypt_desc: "Ripristina i dati originali dai contenitori cifrati.",
@@ -197,7 +197,7 @@ const translations = {
     tooltip_folder_comp_xz: "Compressione XZ/LZMA. Riduzione massima, uso CPU più alto.",
     tooltip_skip_special: "Previene errori saltando link simbolici, socket e nodi di dispositivo.",
     tooltip_enable_pwchk: "Memorizza un hash nell'header per confermare istantaneamente la password prima della decifratura.",
-    tooltip_hide_filename: "Cifra il nome file originale nell'header. Il file di output dovrà avere un nome casuale.",
+    tooltip_hide_filename: "Non include il nome originale nell'header cifrato. Il file decifrato dovrà essere rinominato a mano.",
   }
 };
 
@@ -619,15 +619,24 @@ function renderMetaTo(target, meta) {
   const isContainer = (meta.flags & 32) !== 0;
   const typeLabel = isContainer ? "Archive (Folder)" : "Single File";
 
-  target.innerHTML = `
-    <div><strong>Type:</strong> ${typeLabel}</div>
-    <div><strong>Filename:</strong> ${meta.filename || "(hidden)"}</div>
-    <div><strong>Version:</strong> ${meta.version}</div>
-    <div><strong>Shard:</strong> ${meta.shard_size} bytes</div>
-    <div><strong>K/R:</strong> ${meta.k} / ${meta.r}</div>
-    <div><strong>Plain size:</strong> ${meta.plain_size} bytes</div>
-    <div><strong>Stored size:</strong> ${meta.stored_size} bytes</div>
-  `;
+  target.innerHTML = "";
+
+  const createLine = (label, value) => {
+    const div = document.createElement("div");
+    const strong = document.createElement("strong");
+    strong.textContent = label + ": ";
+    div.appendChild(strong);
+    div.appendChild(document.createTextNode(value));
+    return div;
+  };
+
+  target.appendChild(createLine("Type", typeLabel));
+  target.appendChild(createLine("Filename", meta.filename || "(hidden)"));
+  target.appendChild(createLine("Version", meta.version));
+  target.appendChild(createLine("Shard", `${meta.shard_size} bytes`));
+  target.appendChild(createLine("K/R", `${meta.k} / ${meta.r}`));
+  target.appendChild(createLine("Plain size", `${meta.plain_size} bytes`));
+  target.appendChild(createLine("Stored size", `${meta.stored_size} bytes`));
 }
 
 async function checkFileMetadata(path) {

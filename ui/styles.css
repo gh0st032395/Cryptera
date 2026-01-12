@@ -267,7 +267,7 @@ body::before {
   flex-direction: column;
   gap: 32px;
   min-width: 0;
-  overflow-y: overlay;
+  overflow-y: auto;
   padding-bottom: 32px;
   padding-left: 10px;
   padding-right: 10px;
@@ -699,4 +699,13 @@ button {
 .option.selected {
   background: rgba(53, 208, 161, 0.1);
   color: var(--accent);
+}
+
+/* Utility classes for CSP compliance */
+.mt-24 {
+  margin-top: 24px;
+}
+
+.w-200 {
+  width: 200px;
 }

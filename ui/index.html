@@ -341,8 +341,8 @@
             <span class="pill">Argon2id</span>
             <span class="pill">FEC</span>
           </div>
-          <div style="margin-top: 24px;">
-            <div class="field" style="width: 200px;">
+          <div class="mt-24">
+            <div class="field w-200">
               <label data-i18n="label_language">Language</label>
               <div class="custom-select" id="languageSelect-wrapper">
                 <input type="hidden" id="languageSelect" value="en">
@@ -358,23 +358,7 @@
       </section>
     </main>
   </div>
-  <script>
-    (function () {
-      var status = document.getElementById("statusText");
-      if (status) status.textContent = "Bootstrap...";
-      var s = document.createElement("script");
-      s.src = "./app.js";
-      s.onload = function () {
-        if (status && status.textContent === "Bootstrap...") {
-          status.textContent = "JS loaded";
-        }
-      };
-      s.onerror = function () {
-        if (status) status.textContent = "app.js load failed";
-      };
-      document.body.appendChild(s);
-    })();
-  </script>
+  <script src="./loader.js"></script>
 </body>
 
 </html>

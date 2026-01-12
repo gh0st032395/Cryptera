@@ -173,6 +173,7 @@ fn create_tar(
     comp: &str,
     skip_special: bool,
     ctrl: &ControlFlags,
+    mut progress: Option<&mut dyn FnMut(u64)>,
 ) -> Result<(NamedTempFile, String), String> {
     let base_name = folder
         .file_name()
@@ -192,6 +193,7 @@ fn create_tar(
     let mut builder = tar::Builder::new(writer);
     let base_prefix = PathBuf::from(&base_name);
 
+    let mut count = 0;
     for entry in walkdir::WalkDir::new(folder).follow_links(false) {
         if ctrl.cancel.load(Ordering::SeqCst) {
             return Err("Operation cancelled".to_string());
@@ -202,6 +204,14 @@ fn create_tar(
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
+
+        count += 1;
+        if count % 10 == 0 {
+            if let Some(cb) = progress.as_deref_mut() {
+                cb(count);
+            }
+        }
+
         let entry = match entry {
             Ok(e) => e,
             Err(_) => {
@@ -237,6 +247,10 @@ fn create_tar(
         }
     }
 
+    if let Some(cb) = progress.as_deref_mut() {
+        cb(count);
+    }
+
     builder.finish().map_err(|e| e.to_string())?;
     Ok((tmp, format!("{base_name}{}", tar_suffix(comp))))
 }
@@ -244,20 +258,48 @@ fn create_tar(
 fn safe_extract_tar(tar_path: &str, out_dir: &str) -> Result<(), std::io::Error> {
     let out_dir = Path::new(out_dir).to_path_buf();
     let file = std::fs::File::open(tar_path)?;
-    let mut archive = tar::Archive::new(file);
+
+    let path_str = tar_path.to_lowercase();
+    let decoder: Box<dyn std::io::Read> = if path_str.ends_with(".tar.gz") || path_str.ends_with(".tgz") {
+        Box::new(flate2::read::GzDecoder::new(file))
+    } else if path_str.ends_with(".tar.bz2") || path_str.ends_with(".tbz2") {
+        Box::new(bzip2::read::BzDecoder::new(file))
+    } else if path_str.ends_with(".tar.xz") || path_str.ends_with(".txz") {
+        Box::new(xz2::read::XzDecoder::new(file))
+    } else {
+        Box::new(file)
+    };
+
+    let mut archive = tar::Archive::new(decoder);
 
     for entry in archive.entries()? {
         let mut entry = entry?;
         let path = entry.path()?;
+
+        // Prevent Zip Slip
+        if path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+             return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Zip Slip attempt detected"));
+        }
+
         if path.is_absolute() {
             continue;
         }
-        let dest = out_dir.join(&*path);
-        let dest_abs = dest.canonicalize().unwrap_or(dest.clone());
-        if !dest_abs.starts_with(&out_dir) {
+        
+        // Prevent Windows UNC / Drive letters
+        let path_lossy = path.to_string_lossy();
+        if path_lossy.contains(':') || path_lossy.starts_with(r"\\") {
+             continue;
+        }
+
+        // Skip Symlinks/Hardlinks as per policy
+        if entry.header().entry_type().is_symlink() || entry.header().entry_type().is_hard_link() {
             continue;
         }
-        entry.unpack(dest)?;
+
+        // Double check destination
+        let dest = out_dir.join(&*path);
+        // unpack_in protects against traversal but we added explicit checks above too
+        entry.unpack_in(&out_dir)?; 
     }
     Ok(())
 }
@@ -296,6 +338,10 @@ async fn encrypt(req: EncryptRequest, window: tauri::Window, state: tauri::State
         return Err("Output path required".to_string());
     }
 
+    if std::path::Path::new(&req.output_file).exists() {
+        return Err("Output file already exists. Overwrite protection enabled.".to_string());
+    }
+
     ensure_parent_dir(&req.output_file)?;
 
     let ctrl = ControlFlags {
@@ -323,8 +369,11 @@ async fn encrypt(req: EncryptRequest, window: tauri::Window, state: tauri::State
 
         if !req.input_folder.is_empty() {
             emit_status(&window_clone, "Creating archive...");
+            let mut archive_progress = |done: u64| {
+                emit_progress(&window_clone, "archiving", done, 0);
+            };
             let (tmp_tar, base_name) =
-                create_tar(Path::new(&req.input_folder), &req.folder_comp, req.skip_special, &ctrl)?;
+                create_tar(Path::new(&req.input_folder), &req.folder_comp, req.skip_special, &ctrl, Some(&mut archive_progress))?;
             let tar_path = tmp_tar.path().to_string_lossy().to_string();
             let original_name = if req.hide_filename { Some("") } else { Some(base_name.as_str()) };
             let mut progress = |stage: &str, done: u64, total: u64| {
@@ -405,6 +454,9 @@ async fn decrypt(req: DecryptRequest, window: tauri::Window, state: tauri::State
     if req.extract {
         ensure_dir(&req.output_path)?;
     } else {
+        if std::path::Path::new(&req.output_path).exists() {
+            return Err("Output file already exists. Overwrite protection enabled.".to_string());
+        }
         ensure_parent_dir(&req.output_path)?;
     }
 
