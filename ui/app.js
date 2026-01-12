@@ -674,50 +674,87 @@ async function checkFileMetadata(path) {
 }
 
 async function bindProgressEvents() {
-  if (!eventApi || !eventApi.listen) return;
+  if (!eventApi || !eventApi.listen) {
+    console.warn("Event API not available, skipping drag-drop bind.");
+    return;
+  }
+
+  // Prevent default browser behavior to ensure drop is allowed
+  document.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  });
+  document.addEventListener('drop', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  });
+
   try {
-    // Handle File Drop
+    const handleDrop = (paths) => {
+      if (!paths || paths.length === 0) return;
+
+      const path = paths[0];
+      const activePanel = document.querySelector(".panel.active");
+      if (!activePanel) return;
+
+      if (activePanel.id === "panel-encrypt") {
+        const modeFile = document.querySelector(".seg[data-mode='file']").classList.contains("active");
+        if (modeFile) {
+          if (encFile) encFile.value = path;
+          // Trigger smart calculation
+          if (encOutput) {
+            const sep = path.includes("\\") ? "\\" : "/";
+            const lastDot = path.lastIndexOf(".");
+            let suggested = "";
+            if (lastDot > path.lastIndexOf(sep)) {
+              suggested = path.substring(0, lastDot) + ".ecf";
+            } else {
+              suggested = path.substring(0, lastDot) + ".ecf";
+              // Fallback if no dot
+              if (lastDot === -1) suggested = path + ".ecf";
+            }
+            encOutput.value = suggested;
+          }
+        } else {
+          if (encFolder) encFolder.value = path;
+          if (encOutput) encOutput.value = path + ".ecf";
+        }
+      } else if (activePanel.id === "panel-decrypt") {
+        if (decFile) decFile.value = path;
+        checkFileMetadata(path);
+      } else if (activePanel.id === "panel-verify") {
+        if (verFile) verFile.value = path;
+        handleReadVerifyMeta();
+      }
+    };
+
+    // Handle v1/standard File Drop
     await eventApi.listen("tauri://file-drop", async (e) => {
       if (e && e.payload && e.payload.length > 0) {
-        const path = e.payload[0];
-        const activePanel = document.querySelector(".panel.active");
-        if (!activePanel) return;
+        handleDrop(e.payload);
+      }
+    });
 
-        if (activePanel.id === "panel-encrypt") {
-          const modeFile = document.querySelector(".seg[data-mode='file']").classList.contains("active");
-          if (modeFile) {
-            encFile.value = path;
-            // Trigger smart calculation
-            if (encOutput) {
-              const sep = path.includes("\\") ? "\\" : "/";
-              const lastDot = path.lastIndexOf(".");
-              let suggested = "";
-              if (lastDot > path.lastIndexOf(sep)) {
-                suggested = path.substring(0, lastDot) + ".ecf";
-              } else {
-                suggested = path + ".ecf";
-              }
-              encOutput.value = suggested;
-            }
-          } else {
-            encFolder.value = path;
-            if (encOutput) encOutput.value = path + ".ecf";
-          }
-        } else if (activePanel.id === "panel-decrypt") {
-          decFile.value = path;
-          checkFileMetadata(path);
-        } else if (activePanel.id === "panel-verify") {
-          verFile.value = path;
-          handleReadVerifyMeta();
+    // Handle v2 drag-drop (sometimes payload structure varies)
+    await eventApi.listen("tauri://drag-drop", async (e) => {
+      // payload might be { paths: [], position: {} } or just paths
+      if (e && e.payload) {
+        if (Array.isArray(e.payload)) {
+          handleDrop(e.payload);
+        } else if (e.payload.paths && Array.isArray(e.payload.paths)) {
+          handleDrop(e.payload.paths);
         }
       }
     });
 
+    // Listen to progress events
     await eventApi.listen("progress", (e) => {
       if (e && e.payload) {
         setProgress(e.payload.percent);
       }
     });
+
+    // Listen to status events
     await eventApi.listen("status", (e) => {
       if (e && e.payload) {
         setStatus(e.payload);
@@ -731,8 +768,12 @@ async function bindProgressEvents() {
         }
       }
     });
+
+    console.log("Drag & Drop listeners bound successfully.");
+
   } catch (err) {
     console.error("Event bind error:", err);
+    if (statusText) statusText.textContent = "DnD Bind Error";
   }
 }
 
