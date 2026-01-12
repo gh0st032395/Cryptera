@@ -3,6 +3,7 @@ let progressFill = null;
 let progressValue = null;
 let pauseBtn = null;
 let cancelBtn = null;
+let resetBtn = null;
 
 window.addEventListener("error", (e) => {
   const status = document.getElementById("statusText");
@@ -255,6 +256,8 @@ function bindEvents() {
       setStatus(String(err));
     }
   });
+
+  if (resetBtn) resetBtn.addEventListener("click", handleReset);
 }
 
 async function handleEncrypt() {
@@ -350,6 +353,48 @@ async function handleReadMeta() {
   } catch (err) {
     setStatus(String(err));
   }
+}
+
+
+
+function handleReset() {
+  if (state.busy) return; // Don't reset if busy
+
+  // Clear Inputs
+  const clearIds = [
+    "encFile", "encFolder", "encOutput", "encPassword", "encKeyfile",
+    "decFile", "decOutput", "decPassword", "decKeyfile",
+    "verFile", "verPassword", "verKeyfile"
+  ];
+  clearIds.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = "";
+  });
+
+  // Reset Selects/Checkboxes
+  if (encFileComp) encFileComp.value = "none";
+  if (encFolderComp) encFolderComp.value = "none";
+  if (encSecProfile) encSecProfile.value = "Standard";
+  if (encIntProfile) encIntProfile.value = "Medium";
+  if (encSkipSpecial) encSkipSpecial.checked = true;
+  if (encEnablePwchk) encEnablePwchk.checked = true;
+  if (encHideFilename) encHideFilename.checked = false;
+
+  if (decExtract) decExtract.checked = true;
+  if (decKeepTar) decKeepTar.checked = false;
+
+  // Clear Metadata
+  if (metaContent) metaContent.textContent = "No metadata loaded.";
+  if (verMetaContent) verMetaContent.textContent = "No metadata loaded.";
+
+  // Reset Global State
+  setProgress(0);
+  setStatus("Ready");
+  setBusy(false);
+  updateMode("file");
+
+  // Reset Panels (Visual only, default to Encrypt)
+  document.querySelector('.nav-item[data-tab="encrypt"]').click();
 }
 
 function renderMeta(meta) {
@@ -507,6 +552,7 @@ function bootInit() {
     progressValue = document.getElementById("progressValue");
     pauseBtn = document.getElementById("pauseBtn");
     cancelBtn = document.getElementById("cancelBtn");
+    resetBtn = document.getElementById("resetBtn");
 
     encFile = document.getElementById("encFile");
     encFolder = document.getElementById("encFolder");
