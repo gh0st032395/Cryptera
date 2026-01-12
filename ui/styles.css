@@ -1,0 +1,486 @@
+:root {
+  --bg: #0f1318;
+  --bg-soft: #141a22;
+  --panel: #171f29;
+  --panel-soft: #1c2531;
+  --accent: #35d0a1;
+  --accent-2: #4aa8ff;
+  --accent-3: #f5b04c;
+  --text: #f4f7fb;
+  --muted: #a8b2c0;
+  --line: rgba(255, 255, 255, 0.08);
+  --shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+  --radius: 18px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+  color: var(--text);
+  background: radial-gradient(circle at top left, rgba(53, 208, 161, 0.12), transparent 40%),
+    radial-gradient(circle at 20% 80%, rgba(74, 168, 255, 0.15), transparent 45%),
+    linear-gradient(120deg, #0b0f14, #0f141c 40%, #0c1117 100%);
+  min-height: 100vh;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background-image: linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 36px 36px;
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+  gap: 24px;
+  padding: 28px;
+  position: relative;
+  z-index: 1;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px;
+  background: var(--panel);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.logo {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  display: grid;
+  place-items: center;
+  font-family: "Cascadia Code", "Segoe UI", monospace;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+.brand-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.brand-text .title {
+  font-family: "Cascadia Code", "Segoe UI", monospace;
+  font-size: 18px;
+  letter-spacing: 0.5px;
+}
+
+.brand-text .subtitle {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.nav-item {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--text);
+  padding: 12px 16px;
+  border-radius: 14px;
+  text-align: left;
+  font-family: "Cascadia Code", "Segoe UI", monospace;
+  cursor: pointer;
+  transition: transform 0.2s ease, background 0.2s ease, border 0.2s ease;
+}
+
+.nav-item:hover {
+  transform: translateY(-2px);
+  background: var(--panel-soft);
+}
+
+.nav-item.active {
+  border-color: rgba(53, 208, 161, 0.45);
+  box-shadow: 0 0 0 1px rgba(53, 208, 161, 0.2);
+}
+
+.status-card {
+  margin-top: auto;
+  padding: 18px;
+  background: var(--panel);
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+}
+
+.status-label {
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.status-text {
+  margin-top: 8px;
+  font-size: 14px;
+}
+
+.progress {
+  margin-top: 16px;
+}
+
+.progress-track {
+  height: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  transition: width 0.2s ease;
+}
+
+.progress-value {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.control-row {
+  margin-top: 14px;
+  display: flex;
+  gap: 10px;
+}
+
+.main {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  min-width: 0;
+}
+
+.hero {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 24px 28px;
+  background: var(--panel);
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+  animation: rise 0.6s ease;
+}
+
+.hero h1 {
+  margin: 0 0 6px;
+  font-size: 28px;
+  font-family: "Cascadia Code", "Segoe UI", monospace;
+}
+
+.hero p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.hero-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px 18px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--line);
+}
+
+.metric {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 13px;
+}
+
+.metric-label {
+  color: var(--muted);
+}
+
+.panel {
+  display: none;
+  flex-direction: column;
+  gap: 16px;
+  animation: fade 0.5s ease;
+  min-width: 0;
+}
+
+.panel.active {
+  display: flex;
+}
+
+.panel-header h2 {
+  margin: 0;
+  font-family: "Cascadia Code", "Segoe UI", monospace;
+}
+
+.panel-header p {
+  margin: 6px 0 0;
+  color: var(--muted);
+}
+
+.panel-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 18px;
+  box-shadow: var(--shadow);
+  animation: rise 0.6s ease;
+  min-width: 0;
+}
+
+.card.wide {
+  grid-column: span 2;
+}
+
+.card-title {
+  font-family: "Cascadia Code", "Segoe UI", monospace;
+  margin-bottom: 12px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.field label {
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+input,
+select {
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  color: var(--text);
+  padding: 10px 12px;
+  border-radius: 12px;
+  font-size: 14px;
+}
+
+input::placeholder {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.input-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.input-row input {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+button {
+  border: none;
+  cursor: pointer;
+}
+
+.primary,
+.secondary,
+.ghost,
+.cta {
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-family: "Cascadia Code", "Segoe UI", monospace;
+  font-size: 13px;
+}
+
+.primary {
+  background: rgba(74, 168, 255, 0.2);
+  color: var(--text);
+  border: 1px solid rgba(74, 168, 255, 0.4);
+}
+
+.secondary {
+  background: rgba(245, 176, 76, 0.18);
+  color: var(--text);
+  border: 1px solid rgba(245, 176, 76, 0.35);
+}
+
+.ghost {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--line);
+}
+
+.ghost.danger {
+  border-color: rgba(255, 99, 99, 0.4);
+  color: #ff8b8b;
+}
+
+.cta {
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: #0b0f14;
+  font-weight: 600;
+  padding: 14px 20px;
+}
+
+.panel-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 6px;
+}
+
+.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+
+.checkbox input {
+  width: 16px;
+  height: 16px;
+}
+
+.segmented {
+  display: inline-flex;
+  background: var(--panel-soft);
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  margin-bottom: 12px;
+  overflow: hidden;
+}
+
+.seg {
+  padding: 8px 14px;
+  background: transparent;
+  color: var(--muted);
+  font-family: "Cascadia Code", "Segoe UI", monospace;
+}
+
+.seg.active {
+  background: rgba(53, 208, 161, 0.2);
+  color: var(--text);
+}
+
+.meta-box {
+  border: 1px dashed rgba(255, 255, 255, 0.2);
+  padding: 12px;
+  border-radius: 12px;
+  margin-top: 8px;
+}
+
+.meta-title {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.meta-content {
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.6;
+}
+
+.pill-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.pill {
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--line);
+  font-size: 12px;
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 980px) {
+  .app {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    position: relative;
+  }
+
+  .hero {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 16px;
+  }
+}
+
+@media (max-width: 1180px) {
+  .app {
+    gap: 18px;
+    padding: 20px;
+  }
+}
+
+@media (max-width: 680px) {
+  .input-row {
+    flex-direction: column;
+  }
+
+  .panel-actions {
+    justify-content: stretch;
+  }
+
+  .cta {
+    width: 100%;
+  }
+}

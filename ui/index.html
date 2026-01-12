@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CryptoV2</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="logo">C2</div>
+          <div class="brand-text">
+            <span class="title">CryptoV2</span>
+            <span class="subtitle">Tauri Edition</span>
+          </div>
+        </div>
+        <nav class="nav">
+          <button class="nav-item active" data-tab="encrypt">Encrypt</button>
+          <button class="nav-item" data-tab="decrypt">Decrypt</button>
+          <button class="nav-item" data-tab="verify">Verify</button>
+          <button class="nav-item" data-tab="about">About</button>
+        </nav>
+        <div class="status-card">
+          <div class="status-label">Status</div>
+          <div id="statusText" class="status-text">Booting...</div>
+          <div class="progress">
+            <div class="progress-track">
+              <div id="progressFill" class="progress-fill"></div>
+            </div>
+            <div id="progressValue" class="progress-value">0%</div>
+          </div>
+          <div class="control-row">
+            <button id="pauseBtn" class="ghost">Pause</button>
+            <button id="cancelBtn" class="ghost danger">Cancel</button>
+          </div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <section class="hero">
+          <div>
+            <h1>Secure files, fast workflows.</h1>
+            <p>Offline encryption with Rust core. Clean UI, precise control.</p>
+          </div>
+          <div class="hero-card">
+            <div class="metric">
+              <span class="metric-label">Engine</span>
+              <span class="metric-value">Rust Core</span>
+            </div>
+            <div class="metric">
+              <span class="metric-label">Mode</span>
+              <span class="metric-value">Local Only</span>
+            </div>
+            <div class="metric">
+              <span class="metric-label">UI</span>
+              <span class="metric-value">Tauri</span>
+            </div>
+          </div>
+        </section>
+
+        <section id="panel-encrypt" class="panel active">
+          <div class="panel-header">
+            <h2>Encrypt</h2>
+            <p>Protect a file or a folder with strong crypto defaults.</p>
+          </div>
+          <div class="panel-grid">
+            <div class="card">
+              <div class="card-title">Source</div>
+              <div class="segmented">
+                <button class="seg active" data-mode="file">File</button>
+                <button class="seg" data-mode="folder">Folder</button>
+              </div>
+              <div class="field">
+                <label>File path</label>
+                <div class="input-row">
+                  <input id="encFile" type="text" placeholder="Select a file" />
+                  <button id="encFileBtn" class="primary">Choose</button>
+                </div>
+              </div>
+              <div class="field">
+                <label>Folder path</label>
+                <div class="input-row">
+                  <input id="encFolder" type="text" placeholder="Select a folder" />
+                  <button id="encFolderBtn" class="primary">Choose</button>
+                </div>
+              </div>
+              <div class="field">
+                <label>Output file</label>
+                <div class="input-row">
+                  <input id="encOutput" type="text" placeholder="Select output" />
+                  <button id="encOutputBtn" class="primary">Save As</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">Security</div>
+              <div class="field">
+                <label>Password</label>
+                <input id="encPassword" type="password" placeholder="Required" />
+              </div>
+              <div class="field">
+                <label>Keyfile (optional)</label>
+                <div class="input-row">
+                  <input id="encKeyfile" type="text" placeholder="Select keyfile" />
+                  <button id="encKeyfileBtn" class="primary">Choose</button>
+                </div>
+              </div>
+              <div class="field">
+                <label>Security profile</label>
+                <select id="encSecProfile">
+                  <option>Standard</option>
+                  <option>Strong</option>
+                  <option>Paranoid</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>Integrity profile</label>
+                <select id="encIntProfile">
+                  <option>Medium</option>
+                  <option>Low</option>
+                  <option>High</option>
+                  <option>Max</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-title">Options</div>
+              <div class="field">
+                <label>File compression</label>
+                <select id="encFileComp">
+                  <option value="none">none</option>
+                  <option value="zlib">zlib</option>
+                  <option value="lzma">lzma</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>Folder archive compression</label>
+                <select id="encFolderComp">
+                  <option value="none">none</option>
+                  <option value="gz">gz</option>
+                  <option value="bz2">bz2</option>
+                  <option value="xz">xz</option>
+                </select>
+              </div>
+              <div class="checkbox">
+                <input id="encSkipSpecial" type="checkbox" checked />
+                <label for="encSkipSpecial">Skip symlinks and special entries</label>
+              </div>
+              <div class="checkbox">
+                <input id="encEnablePwchk" type="checkbox" checked />
+                <label for="encEnablePwchk">Enable password check record</label>
+              </div>
+              <div class="checkbox">
+                <input id="encHideFilename" type="checkbox" />
+                <label for="encHideFilename">Hide original filename</label>
+              </div>
+            </div>
+          </div>
+          <div class="panel-actions">
+            <button id="encryptBtn" class="cta">Start Encryption</button>
+          </div>
+        </section>
+
+        <section id="panel-decrypt" class="panel">
+          <div class="panel-header">
+            <h2>Decrypt</h2>
+            <p>Recover files and optionally extract archived folders.</p>
+          </div>
+          <div class="panel-grid">
+            <div class="card">
+              <div class="card-title">Source</div>
+              <div class="field">
+                <label>Encrypted file</label>
+                <div class="input-row">
+                  <input id="decFile" type="text" placeholder="Select a file" />
+                  <button id="decFileBtn" class="primary">Choose</button>
+                </div>
+              </div>
+              <div class="field">
+                <label>Output path</label>
+                <div class="input-row">
+                  <input id="decOutput" type="text" placeholder="Folder or file" />
+                  <button id="decOutputBtn" class="primary">Select</button>
+                </div>
+              </div>
+              <div class="meta-box" id="metaBox">
+                <div class="meta-title">Metadata</div>
+                <div id="metaContent" class="meta-content">No metadata loaded.</div>
+              </div>
+              <button id="readMetaBtn" class="secondary">Read Metadata</button>
+            </div>
+
+            <div class="card">
+              <div class="card-title">Credentials</div>
+              <div class="field">
+                <label>Password</label>
+                <input id="decPassword" type="password" placeholder="Required" />
+              </div>
+              <div class="field">
+                <label>Keyfile (optional)</label>
+                <div class="input-row">
+                  <input id="decKeyfile" type="text" placeholder="Select keyfile" />
+                  <button id="decKeyfileBtn" class="primary">Choose</button>
+                </div>
+              </div>
+              <div class="checkbox">
+                <input id="decExtract" type="checkbox" checked />
+                <label for="decExtract">Auto extract TAR containers</label>
+              </div>
+              <div class="checkbox">
+                <input id="decKeepTar" type="checkbox" />
+                <label for="decKeepTar">Keep decrypted TAR</label>
+              </div>
+            </div>
+          </div>
+          <div class="panel-actions">
+            <button id="decryptBtn" class="cta">Start Decryption</button>
+          </div>
+        </section>
+
+        <section id="panel-verify" class="panel">
+          <div class="panel-header">
+            <h2>Verify</h2>
+            <p>Validate integrity without decrypting.</p>
+          </div>
+          <div class="panel-grid">
+            <div class="card">
+              <div class="card-title">Target</div>
+              <div class="field">
+                <label>Encrypted file</label>
+                <div class="input-row">
+                  <input id="verFile" type="text" placeholder="Select a file" />
+                  <button id="verFileBtn" class="primary">Choose</button>
+                </div>
+              </div>
+              <div class="meta-box" id="verMetaBox">
+                <div class="meta-title">Metadata</div>
+                <div id="verMetaContent" class="meta-content">No metadata loaded.</div>
+              </div>
+              <button id="readVerifyMetaBtn" class="secondary">Read Metadata</button>
+            </div>
+            <div class="card">
+              <div class="card-title">Credentials</div>
+              <div class="field">
+                <label>Password</label>
+                <input id="verPassword" type="password" placeholder="Required" />
+              </div>
+              <div class="field">
+                <label>Keyfile (optional)</label>
+                <div class="input-row">
+                  <input id="verKeyfile" type="text" placeholder="Select keyfile" />
+                  <button id="verKeyfileBtn" class="primary">Choose</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="panel-actions">
+            <button id="verifyBtn" class="cta">Run Verification</button>
+          </div>
+        </section>
+
+        <section id="panel-about" class="panel">
+          <div class="panel-header">
+            <h2>About</h2>
+            <p>Security-first local encryption.</p>
+          </div>
+          <div class="card wide">
+            <div class="card-title">CryptoV2</div>
+            <p>
+              Built on a Rust core with AES-GCM, Argon2id and erasure coding.
+              All operations run locally. No external services or uploads.
+            </p>
+            <div class="pill-row">
+              <span class="pill">AES-256-GCM</span>
+              <span class="pill">Argon2id</span>
+              <span class="pill">FEC</span>
+              <span class="pill">Tauri</span>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script>
+      (function () {
+        var status = document.getElementById("statusText");
+        if (status) status.textContent = "Bootstrap...";
+        var s = document.createElement("script");
+        s.src = "./app.js";
+        s.onload = function () {
+          if (status && status.textContent === "Bootstrap...") {
+            status.textContent = "JS loaded";
+          }
+        };
+        s.onerror = function () {
+          if (status) status.textContent = "app.js load failed";
+        };
+        document.body.appendChild(s);
+      })();
+    </script>
+  </body>
+</html>
