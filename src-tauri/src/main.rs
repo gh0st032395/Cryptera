@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
+use secrecy::{Secret, ExposeSecret};
 
 use crypto_core_rs::{
     decrypt_file_ex_rs_controlled,
@@ -26,7 +27,8 @@ struct EncryptRequest {
     input_file: String,
     input_folder: String,
     output_file: String,
-    password: String,
+    #[serde(deserialize_with = "deserialize_secret")]
+    password: Secret<String>,
     keyfile_path: Option<String>,
     folder_comp: String,
     file_comp: String,
@@ -37,11 +39,21 @@ struct EncryptRequest {
     int_profile: String,
 }
 
+fn deserialize_secret<'de, D>(deserializer: D) -> Result<Secret<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize;
+    let s = String::deserialize(deserializer)?;
+    Ok(Secret::new(s))
+}
+
 #[derive(Deserialize)]
 struct DecryptRequest {
     input_file: String,
     output_path: String,
-    password: String,
+    #[serde(deserialize_with = "deserialize_secret")]
+    password: Secret<String>,
     keyfile_path: Option<String>,
     extract: bool,
     keep_tar: bool,
@@ -50,7 +62,8 @@ struct DecryptRequest {
 #[derive(Deserialize)]
 struct VerifyRequest {
     input_file: String,
-    password: String,
+    #[serde(deserialize_with = "deserialize_secret")]
+    password: Secret<String>,
     keyfile_path: Option<String>,
 }
 
@@ -328,7 +341,7 @@ fn cancel_job(state: tauri::State<AppState>) -> Result<(), String> {
 
 #[tauri::command]
 async fn encrypt(req: EncryptRequest, window: tauri::Window, state: tauri::State<'_, AppState>) -> Result<(), String> {
-    if req.password.trim().is_empty() {
+    if req.password.expose_secret().trim().is_empty() {
         return Err("Password required".to_string());
     }
     if req.input_file.is_empty() && req.input_folder.is_empty() {
@@ -382,7 +395,7 @@ async fn encrypt(req: EncryptRequest, window: tauri::Window, state: tauri::State
             encrypt_file_rs_controlled(
                 &tar_path,
                 &req.output_file,
-                &req.password,
+                req.password.expose_secret(),
                 kf_hash.as_deref(),
                 None,
                 req.enable_pwchk,
@@ -408,7 +421,7 @@ async fn encrypt(req: EncryptRequest, window: tauri::Window, state: tauri::State
             encrypt_file_rs_controlled(
                 &req.input_file,
                 &tmp_output_path,
-                &req.password,
+                req.password.expose_secret(),
                 kf_hash.as_deref(),
                 comp,
                 req.enable_pwchk,
@@ -445,7 +458,7 @@ async fn encrypt(req: EncryptRequest, window: tauri::Window, state: tauri::State
 
 #[tauri::command]
 async fn decrypt(req: DecryptRequest, window: tauri::Window, state: tauri::State<'_, AppState>) -> Result<DecryptResult, String> {
-    if req.password.trim().is_empty() {
+    if req.password.expose_secret().trim().is_empty() {
         return Err("Password required".to_string());
     }
     if req.input_file.is_empty() {
@@ -492,7 +505,7 @@ async fn decrypt(req: DecryptRequest, window: tauri::Window, state: tauri::State
             let meta = decrypt_file_ex_rs_controlled(
                 &req.input_file,
                 &tmp_output_path,
-                &req.password,
+                req.password.expose_secret(),
                 kf_hash.as_deref(),
                 Some(&ctrl),
                 Some(&mut progress),
@@ -518,7 +531,7 @@ async fn decrypt(req: DecryptRequest, window: tauri::Window, state: tauri::State
         let meta = decrypt_file_ex_rs_controlled(
             &req.input_file,
             &tar_path,
-            &req.password,
+            req.password.expose_secret(),
             kf_hash.as_deref(),
             Some(&ctrl),
             Some(&mut progress),
@@ -552,7 +565,7 @@ async fn decrypt(req: DecryptRequest, window: tauri::Window, state: tauri::State
 
 #[tauri::command]
 async fn verify(req: VerifyRequest, window: tauri::Window, state: tauri::State<'_, AppState>) -> Result<(), String> {
-    if req.password.trim().is_empty() {
+    if req.password.expose_secret().trim().is_empty() {
         return Err("Password required".to_string());
     }
     if req.input_file.is_empty() {
@@ -584,7 +597,7 @@ async fn verify(req: VerifyRequest, window: tauri::Window, state: tauri::State<'
         };
         verify_file_integrity_rs_controlled(
             &req.input_file,
-            &req.password,
+            req.password.expose_secret(),
             kf_hash.as_deref(),
             Some(&ctrl),
             Some(&mut progress),
