@@ -7,16 +7,23 @@ let cancelBtn = null;
 window.addEventListener("error", (e) => {
   const status = document.getElementById("statusText");
   if (status) status.textContent = `JS error: ${e.message}`;
+  console.error("JS error:", e);
 });
 
 window.addEventListener("unhandledrejection", (e) => {
   const status = document.getElementById("statusText");
   if (status) status.textContent = `Promise error: ${e.reason}`;
+  console.error("Promise error:", e);
 });
 
 const tauri = window.__TAURI__ || {};
 const invoke = tauri?.core?.invoke || tauri?.tauri?.invoke || tauri?.invoke;
 const eventApi = tauri?.event || tauri?.core?.event || tauri?.tauri?.event;
+
+console.log("Tauri object:", tauri);
+if (window.__TAURI__) {
+  console.log("Core:", window.__TAURI__.core);
+}
 
 const state = {
   busy: false,
@@ -56,6 +63,7 @@ function setStatus(text) {
   }
   if (!statusText) return;
   statusText.textContent = text;
+  console.log("Status:", text);
 }
 
 function setProgress(percent) {
@@ -150,7 +158,16 @@ function bindEvents() {
       setStatus(`Missing element: ${id}`);
       return;
     }
-    el.addEventListener("click", handler);
+    el.addEventListener("click", async (e) => {
+      setStatus(`Debug: Clicked ${id}`);
+      console.log(`Debug: Clicked ${id}`);
+      try {
+        await handler(e);
+      } catch (err) {
+        setStatus(`Handler error: ${err}`);
+        console.error(err);
+      }
+    });
   };
 
   onClick("encFileBtn", () => pickFile(encFile));
@@ -329,7 +346,7 @@ async function bindProgressEvents() {
     await eventApi.listen("status", (e) => {
       if (e && e.payload) {
         setStatus(e.payload);
-        const match = String(e.payload).match(/(\\d+)\\/(\\d+)/);
+        const match = String(e.payload).match(/(\d+)\/(\d+)/);
         if (match) {
           const done = Number(match[1]);
           const total = Number(match[2]);
@@ -345,9 +362,15 @@ async function bindProgressEvents() {
 }
 
 function assertTauri() {
-  if (!invoke || !eventApi || !eventApi.listen) {
-    setStatus("Tauri API non disponibile: ricompila e riavvia l'app.");
+  if (!invoke) {
+    setStatus("Error: invoke not found in window.__TAURI__");
+    return false;
   }
+  if (!eventApi || !eventApi.listen) {
+    setStatus("Error: eventApi not found in window.__TAURI__");
+    return false;
+  }
+  return true;
 }
 
 async function handleReadVerifyMeta() {
@@ -399,14 +422,15 @@ function bootInit() {
     bindNavigation();
     setStatus("Nav bound");
     bindEvents();
-    setStatus("Events bound");
+    setStatus("Events bound - checking Tauri...");
     bindProgressEvents();
-    assertTauri();
+    if (!assertTauri()) return;
     updateMode("file");
     setProgress(0);
-    setStatus("Ready");
+    setStatus("Ready (Debug Mode)");
   } catch (err) {
     setStatus(`Init error: ${err}`);
+    console.error(err);
   }
 }
 
