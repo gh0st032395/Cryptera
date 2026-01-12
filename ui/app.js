@@ -20,11 +20,6 @@ const tauri = window.__TAURI__ || {};
 const invoke = tauri?.core?.invoke || tauri?.tauri?.invoke || tauri?.invoke;
 const eventApi = tauri?.event || tauri?.core?.event || tauri?.tauri?.event;
 
-console.log("Tauri object:", tauri);
-if (window.__TAURI__) {
-  console.log("Core:", window.__TAURI__.core);
-}
-
 const state = {
   busy: false,
   paused: false,
@@ -63,7 +58,6 @@ function setStatus(text) {
   }
   if (!statusText) return;
   statusText.textContent = text;
-  console.log("Status:", text);
 }
 
 function setProgress(percent) {
@@ -159,8 +153,7 @@ function bindEvents() {
       return;
     }
     el.addEventListener("click", async (e) => {
-      setStatus(`Debug: Clicked ${id}`);
-      console.log(`Debug: Clicked ${id}`);
+      // debug log removed
       try {
         await handler(e);
       } catch (err) {
@@ -241,10 +234,14 @@ function bindEvents() {
 
   if (pauseBtn) pauseBtn.addEventListener("click", async () => {
     if (!invoke) return;
-    state.paused = !state.paused;
-    pauseBtn.textContent = state.paused ? "Resume" : "Pause";
     try {
-      await invoke("set_pause", { pause: state.paused });
+      // Optimistically we don't toggle yet. We ask the backend first.
+      const newPausedState = !state.paused;
+      await invoke("set_pause", { pause: newPausedState });
+
+      // If success, update UI
+      state.paused = newPausedState;
+      pauseBtn.textContent = state.paused ? "Resume" : "Pause";
     } catch (err) {
       setStatus(String(err));
     }
@@ -425,6 +422,43 @@ async function checkFileMetadata(path) {
 async function bindProgressEvents() {
   if (!eventApi || !eventApi.listen) return;
   try {
+    // Handle File Drop
+    await eventApi.listen("tauri://file-drop", async (e) => {
+      if (e && e.payload && e.payload.length > 0) {
+        const path = e.payload[0];
+        const activePanel = document.querySelector(".panel.active");
+        if (!activePanel) return;
+
+        if (activePanel.id === "panel-encrypt") {
+          const modeFile = document.querySelector(".seg[data-mode='file']").classList.contains("active");
+          if (modeFile) {
+            encFile.value = path;
+            // Trigger smart calculation
+            if (encOutput) {
+              const sep = path.includes("\\") ? "\\" : "/";
+              const lastDot = path.lastIndexOf(".");
+              let suggested = "";
+              if (lastDot > path.lastIndexOf(sep)) {
+                suggested = path.substring(0, lastDot) + ".ecf";
+              } else {
+                suggested = path + ".ecf";
+              }
+              encOutput.value = suggested;
+            }
+          } else {
+            encFolder.value = path;
+            if (encOutput) encOutput.value = path + ".ecf";
+          }
+        } else if (activePanel.id === "panel-decrypt") {
+          decFile.value = path;
+          checkFileMetadata(path);
+        } else if (activePanel.id === "panel-verify") {
+          verFile.value = path;
+          handleReadVerifyMeta();
+        }
+      }
+    });
+
     await eventApi.listen("progress", (e) => {
       if (e && e.payload) {
         setProgress(e.payload.percent);
@@ -444,19 +478,13 @@ async function bindProgressEvents() {
       }
     });
   } catch (err) {
-    setStatus(`Event error: ${err}`);
+    console.error("Event bind error:", err);
   }
 }
 
 function assertTauri() {
-  if (!invoke) {
-    setStatus("Error: invoke not found in window.__TAURI__");
-    return false;
-  }
-  if (!eventApi || !eventApi.listen) {
-    setStatus("Error: eventApi not found in window.__TAURI__");
-    return false;
-  }
+  if (!invoke) return false;
+  if (!eventApi || !eventApi.listen) return false;
   return true;
 }
 
@@ -507,14 +535,13 @@ function bootInit() {
     verKeyfile = document.getElementById("verKeyfile");
 
     bindNavigation();
-    setStatus("Nav bound");
     bindEvents();
-    setStatus("Events bound - checking Tauri...");
     bindProgressEvents();
     if (!assertTauri()) return;
     updateMode("file");
     setProgress(0);
-    setStatus("Ready (Debug Mode)");
+    setBusy(false); // Ensure buttons are correct state
+    setStatus("Ready");
   } catch (err) {
     setStatus(`Init error: ${err}`);
     console.error(err);
