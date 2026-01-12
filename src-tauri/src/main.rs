@@ -309,9 +309,7 @@ fn safe_extract_tar(tar_path: &str, out_dir: &str) -> Result<(), std::io::Error>
             continue;
         }
 
-        // Double check destination
-        let dest = out_dir.join(&*path);
-        // unpack_in protects against traversal but we added explicit checks above too
+        // Double check destination (validation done by unpack_in)
         entry.unpack_in(&out_dir)?; 
     }
     Ok(())

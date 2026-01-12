@@ -1116,7 +1116,7 @@ pub fn decrypt_file_ex_rs_controlled(
     password: &str,
     keyfile_hash: Option<&[u8]>,
     control: Option<&ControlFlags>,
-    mut progress: Option<&mut dyn FnMut(&str, u64, u64)>,
+    progress: Option<&mut dyn FnMut(&str, u64, u64)>,
 ) -> Result<MetaInfo, CoreError> {
     let params = decrypt_internal_rs_controlled(
         input_file,
@@ -1152,7 +1152,7 @@ pub fn verify_file_integrity_rs_controlled(
     password: &str,
     keyfile_hash: Option<&[u8]>,
     control: Option<&ControlFlags>,
-    mut progress: Option<&mut dyn FnMut(&str, u64, u64)>,
+    progress: Option<&mut dyn FnMut(&str, u64, u64)>,
 ) -> Result<MetaInfo, CoreError> {
     let params = verify_internal_rs_controlled(
         input_file,
@@ -1519,7 +1519,7 @@ fn decrypt_internal(
         .unwrap_or_else(|| Path::new("."));
     let tmp_out = NamedTempFile::new_in(out_dir).map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
     let tmp_path = tmp_out.path().to_path_buf();
-    let mut f_out = BufWriter::new(tmp_out.reopen().map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?);
+    let f_out = BufWriter::new(tmp_out.reopen().map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?);
 
     let mut writer: Box<dyn Write> = if params.flags & HDR_FLAG_COMPRESS_ZLIB != 0 {
         Box::new(ZlibDecoder::new(LimitedWriter::new(f_out, Some(params.plain_size))))
