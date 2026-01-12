@@ -42,10 +42,14 @@
         </div>
       </div>
       <nav class="nav">
-        <button class="nav-item active" data-tab="encrypt" data-i18n="nav_encrypt">Encrypt</button>
-        <button class="nav-item" data-tab="decrypt" data-i18n="nav_decrypt">Decrypt</button>
-        <button class="nav-item" data-tab="verify" data-i18n="nav_verify">Verify</button>
-        <button class="nav-item" data-tab="about" data-i18n="nav_about">About</button>
+        <button class="nav-item active" data-tab="encrypt" data-i18n="nav_encrypt" role="tab" aria-selected="true"
+          aria-controls="panel-encrypt">Encrypt</button>
+        <button class="nav-item" data-tab="decrypt" data-i18n="nav_decrypt" role="tab" aria-selected="false"
+          aria-controls="panel-decrypt">Decrypt</button>
+        <button class="nav-item" data-tab="verify" data-i18n="nav_verify" role="tab" aria-selected="false"
+          aria-controls="panel-verify">Verify</button>
+        <button class="nav-item" data-tab="about" data-i18n="nav_about" role="tab" aria-selected="false"
+          aria-controls="panel-about">About</button>
       </nav>
       <div class="status-card">
         <div class="status-label">Status</div>
@@ -134,11 +138,13 @@
               <label data-i18n="label_sec_profile">Security profile</label>
               <div class="custom-select" id="encSecProfile-wrapper">
                 <input type="hidden" id="encSecProfile" value="Standard">
-                <div class="select-trigger" data-i18n="opt_standard">Standard</div>
+                <div class="select-trigger" data-i18n="opt_standard" role="button" tabindex="0" aria-haspopup="listbox"
+                  aria-expanded="false">Standard</div>
                 <div class="select-options">
                   <div class="option" data-value="Standard" data-i18n="opt_standard"
                     data-i18n-tooltip="tooltip_sec_standard"
-                    data-tooltip="Argon2id: 3 passes, 64MB RAM. Balanced security (Default).">Standard</div>
+                    data-tooltip="Argon2id: 3 passes, 64MB RAM. Balanced security (Default)." role="option"
+                    tabindex="0">Standard</div>
                   <div class="option" data-value="Strong" data-i18n="opt_strong" data-i18n-tooltip="tooltip_sec_strong"
                     data-tooltip="Argon2id: 6 passes, 256MB RAM. heavy protection against brute-force.">Strong</div>
                   <div class="option" data-value="Paranoid" data-i18n="opt_paranoid"
@@ -175,7 +181,8 @@
                 data-tooltip="Compresses the file before encryption to save space.">File compression</label>
               <div class="custom-select" id="encFileComp-wrapper">
                 <input type="hidden" id="encFileComp" value="none">
-                <div class="select-trigger" data-i18n="opt_none">none</div>
+                <div class="select-trigger" data-i18n="opt_none" role="button" tabindex="0" aria-haspopup="listbox"
+                  aria-expanded="false">none</div>
                 <div class="select-options">
                   <div class="option" data-value="none" data-i18n="opt_none" data-i18n-tooltip="tooltip_file_comp_none"
                     data-tooltip="No compression. Fastest.">none</div>
@@ -346,7 +353,8 @@
               <label data-i18n="label_language">Language</label>
               <div class="custom-select" id="languageSelect-wrapper">
                 <input type="hidden" id="languageSelect" value="en">
-                <div class="select-trigger">English</div>
+                <div class="select-trigger" role="button" tabindex="0" aria-haspopup="listbox" aria-expanded="false">
+                  English</div>
                 <div class="select-options">
                   <div class="option" data-value="en">English</div>
                   <div class="option" data-value="it">Italiano</div>

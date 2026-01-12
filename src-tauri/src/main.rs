@@ -399,14 +399,15 @@ async fn encrypt(req: EncryptRequest, window: tauri::Window, state: tauri::State
             )
             .map_err(|e| e.message)?;
         } else {
-            let comp = if req.file_comp == "none" { None } else { Some(req.file_comp.as_str()) };
+             let comp = if req.file_comp == "none" { None } else { Some(req.file_comp.as_str()) };
             let original_name = if req.hide_filename { Some("") } else { None };
+            let tmp_output_path = format!("{}.tmp", req.output_file);
             let mut progress = |stage: &str, done: u64, total: u64| {
                 emit_progress(&window_clone, stage, done, total);
             };
             encrypt_file_rs_controlled(
                 &req.input_file,
-                &req.output_file,
+                &tmp_output_path,
                 &req.password,
                 kf_hash.as_deref(),
                 comp,
@@ -423,6 +424,9 @@ async fn encrypt(req: EncryptRequest, window: tauri::Window, state: tauri::State
                 Some(&mut progress),
             )
             .map_err(|e| e.message)?;
+            
+            // Atomic rename
+            std::fs::rename(&tmp_output_path, &req.output_file).map_err(|e| format!("Failed to rename temp file: {}", e))?;
         }
         emit_progress(&window_clone, "encrypt", 1, 1);
         emit_status(&window_clone, "Encryption complete");
@@ -484,15 +488,20 @@ async fn decrypt(req: DecryptRequest, window: tauri::Window, state: tauri::State
             let mut progress = |stage: &str, done: u64, total: u64| {
                 emit_progress(&window_clone, stage, done, total);
             };
+            let tmp_output_path = format!("{}.tmp", req.output_path);
             let meta = decrypt_file_ex_rs_controlled(
                 &req.input_file,
-                &req.output_path,
+                &tmp_output_path,
                 &req.password,
                 kf_hash.as_deref(),
                 Some(&ctrl),
                 Some(&mut progress),
             )
             .map_err(|e| e.message)?;
+            
+            // Atomic rename
+            std::fs::rename(&tmp_output_path, &req.output_path).map_err(|e| format!("Failed to rename temp file: {}", e))?;
+
             emit_progress(&window_clone, "decrypt", 1, 1);
             emit_status(&window_clone, "Decryption complete");
             return Ok(DecryptResult {
