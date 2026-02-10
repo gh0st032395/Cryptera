@@ -1,0 +1,27 @@
+[package]
+name = "crypto_core_rs-fuzz"
+version = "0.0.1"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+tempfile = "3.10"
+crypto_core_rs = { path = ".." }
+
+[[bin]]
+name = "header_blob"
+path = "fuzz_targets/header_blob.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decrypt_path"
+path = "fuzz_targets/decrypt_path.rs"
+test = false
+doc = false
+bench = false

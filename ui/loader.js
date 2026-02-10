@@ -2,6 +2,7 @@
     var status = document.getElementById("statusText");
     if (status) status.textContent = "Bootstrap...";
     var s = document.createElement("script");
+    s.type = "module";
     s.src = "./app.js";
     s.onload = function () {
         if (status && status.textContent === "Bootstrap...") {

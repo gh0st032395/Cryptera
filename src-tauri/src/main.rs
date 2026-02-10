@@ -22,6 +22,24 @@ struct AppState {
     control: Mutex<Option<ControlFlags>>,
 }
 
+fn set_active_control(state: &tauri::State<'_, AppState>, ctrl: ControlFlags) -> Result<(), String> {
+    let mut guard = state
+        .control
+        .lock()
+        .map_err(|_| "State lock failed".to_string())?;
+    *guard = Some(ctrl);
+    Ok(())
+}
+
+fn clear_active_control(state: &tauri::State<'_, AppState>) -> Result<(), String> {
+    let mut guard = state
+        .control
+        .lock()
+        .map_err(|_| "State lock failed".to_string())?;
+    *guard = None;
+    Ok(())
+}
+
 #[derive(Deserialize)]
 struct EncryptRequest {
     input_file: String,
@@ -363,13 +381,10 @@ async fn encrypt(req: EncryptRequest, window: tauri::Window, state: tauri::State
         cancel: ctrl.cancel.clone(),
         pause: ctrl.pause.clone(),
     };
-    {
-        let mut guard = state.control.lock().map_err(|_| "State lock failed".to_string())?;
-        *guard = Some(ctrl_state);
-    }
+    set_active_control(&state, ctrl_state)?;
 
     let window_clone = window.clone();
-    let res = tauri::async_runtime::spawn_blocking(move || {
+    let join_res = tauri::async_runtime::spawn_blocking(move || {
         emit_status(&window_clone, "Starting encryption...");
         let kf_hash = match req.keyfile_path.as_deref() {
             Some(p) => Some(get_keyfile_hash_rs(p).map_err(|e| e.message)?),
@@ -443,14 +458,13 @@ async fn encrypt(req: EncryptRequest, window: tauri::Window, state: tauri::State
         emit_status(&window_clone, "Encryption complete");
         Ok(())
     })
-    .await
-    .map_err(|e| e.to_string())?;
+    .await;
 
-    {
-        let mut guard = state.control.lock().map_err(|_| "State lock failed".to_string())?;
-        *guard = None;
-    }
-
+    let res = match join_res {
+        Ok(inner) => inner,
+        Err(e) => Err(e.to_string()),
+    };
+    clear_active_control(&state)?;
     res
 }
 
@@ -483,13 +497,10 @@ async fn decrypt(req: DecryptRequest, window: tauri::Window, state: tauri::State
         cancel: ctrl.cancel.clone(),
         pause: ctrl.pause.clone(),
     };
-    {
-        let mut guard = state.control.lock().map_err(|_| "State lock failed".to_string())?;
-        *guard = Some(ctrl_state);
-    }
+    set_active_control(&state, ctrl_state)?;
 
     let window_clone = window.clone();
-    let res = tauri::async_runtime::spawn_blocking(move || -> Result<DecryptResult, String> {
+    let join_res = tauri::async_runtime::spawn_blocking(move || -> Result<DecryptResult, String> {
         emit_status(&window_clone, "Starting decryption...");
         let kf_hash = match req.keyfile_path.as_deref() {
             Some(p) => Some(get_keyfile_hash_rs(p).map_err(|e| e.message)?),
@@ -550,14 +561,13 @@ async fn decrypt(req: DecryptRequest, window: tauri::Window, state: tauri::State
             meta: Some(MetaInfoDto::from(meta)),
         })
     })
-    .await
-    .map_err(|e| e.to_string())?;
+    .await;
 
-    {
-        let mut guard = state.control.lock().map_err(|_| "State lock failed".to_string())?;
-        *guard = None;
-    }
-
+    let res = match join_res {
+        Ok(inner) => inner,
+        Err(e) => Err(e.to_string()),
+    };
+    clear_active_control(&state)?;
     res
 }
 
@@ -578,13 +588,10 @@ async fn verify(req: VerifyRequest, window: tauri::Window, state: tauri::State<'
         cancel: ctrl.cancel.clone(),
         pause: ctrl.pause.clone(),
     };
-    {
-        let mut guard = state.control.lock().map_err(|_| "State lock failed".to_string())?;
-        *guard = Some(ctrl_state);
-    }
+    set_active_control(&state, ctrl_state)?;
 
     let window_clone = window.clone();
-    let res = tauri::async_runtime::spawn_blocking(move || {
+    let join_res = tauri::async_runtime::spawn_blocking(move || {
         emit_status(&window_clone, "Verifying...");
         let kf_hash = match req.keyfile_path.as_deref() {
             Some(p) => Some(get_keyfile_hash_rs(p).map_err(|e| e.message)?),
@@ -604,14 +611,13 @@ async fn verify(req: VerifyRequest, window: tauri::Window, state: tauri::State<'
         emit_status(&window_clone, "Verification OK");
         Ok(())
     })
-    .await
-    .map_err(|e| e.to_string())?;
+    .await;
 
-    {
-        let mut guard = state.control.lock().map_err(|_| "State lock failed".to_string())?;
-        *guard = None;
-    }
-
+    let res = match join_res {
+        Ok(inner) => inner,
+        Err(e) => Err(e.to_string()),
+    };
+    clear_active_control(&state)?;
     res
 }
 
@@ -698,4 +704,34 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn security_profile_mapping_is_stable() {
+        assert_eq!(sec_profile_params("Standard"), (3, 64 * 1024, 2));
+        assert_eq!(sec_profile_params("Strong"), (6, 256 * 1024, 4));
+        assert_eq!(sec_profile_params("Paranoid"), (10, 512 * 1024, 8));
+        assert_eq!(sec_profile_params("unknown"), (3, 64 * 1024, 2));
+    }
+
+    #[test]
+    fn integrity_profile_mapping_is_stable() {
+        assert_eq!(int_profile_params("Medium"), (24, 8));
+        assert_eq!(int_profile_params("Low"), (28, 4));
+        assert_eq!(int_profile_params("High"), (12, 12));
+        assert_eq!(int_profile_params("Max"), (8, 24));
+        assert_eq!(int_profile_params("unknown"), (24, 8));
+    }
+
+    #[test]
+    fn tar_suffix_mapping_is_stable() {
+        assert_eq!(tar_suffix("none"), ".tar");
+        assert_eq!(tar_suffix("gz"), ".tar.gz");
+        assert_eq!(tar_suffix("bz2"), ".tar.bz2");
+        assert_eq!(tar_suffix("xz"), ".tar.xz");
+    }
 }

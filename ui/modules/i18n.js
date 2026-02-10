@@ -1,4 +1,4 @@
-// i18n.js - Internationalization module
+﻿// i18n.js - Internationalization module
 export const translations = {
     en: {
         nav_encrypt: "Encrypt",

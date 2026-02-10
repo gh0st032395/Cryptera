@@ -25,10 +25,11 @@ use std::sync::{
 use std::time::Duration;
 use tempfile::NamedTempFile;
 use xz2::write::XzDecoder;
+use zeroize::Zeroizing;
 
 const MAGIC: &[u8; 4] = b"ECF1";
 const TRAILER: &[u8; 4] = b"ECCT";
-const VERSION_U8: u8 = 3;
+const VERSION_U8: u8 = 4;
 
 const ALG_AES_GCM: u8 = 1;
 const KDF_ARGON2ID: u8 = 1;
@@ -74,11 +75,14 @@ const PWCHK_MAGIC: &[u8; 4] = b"PWCK";
 const PWCHK_PLAINTEXT_LEN: usize = 32;
 const PWCHK_PLAINTEXT: [u8; PWCHK_PLAINTEXT_LEN] = *b"ECF1-PASSWORD-CHECK-RECORD-000\0\0";
 const PWCHK_RECORD_SIZE: usize = 4 + (4 * CRC_COPIES) + PWCHK_PLAINTEXT_LEN + TAG_LEN;
+const HEADER_AUTH_TAG_LEN: usize = 16;
+const HEADER_AUTH_CONTEXT: &[u8] = b"ECF1-HEADER-AUTH-V1";
 
 const DECRYPT_OK: &str = "OK";
 const DECRYPT_PASSWORD_INVALID: &str = "PASSWORD_INVALID";
 const DECRYPT_CORRUPT_BEYOND_FEC: &str = "CORRUPT_BEYOND_FEC";
 const DECRYPT_HEADER_INVALID: &str = "HEADER_INVALID";
+const DECRYPT_HEADER_AUTH_FAILED: &str = "HEADER_AUTH_FAILED";
 const DECRYPT_PARAMS_OUT_OF_LIMITS: &str = "PARAMS_OUT_OF_LIMITS";
 const DECRYPT_TRUNCATED: &str = "TRUNCATED";
 const DECRYPT_IO_ERROR: &str = "IO_ERROR";
@@ -206,12 +210,12 @@ fn derive_key(
             "Password invalid (empty).",
         ));
     }
-    let mut secret = password.as_bytes().to_vec();
+    let mut secret = Zeroizing::new(password.as_bytes().to_vec());
     if let Some(kf) = keyfile_hash {
         let mut mac = <HmacSha256 as Mac>::new_from_slice(kf)
             .map_err(|_| CoreError::new(DECRYPT_UNKNOWN_ERROR, "HMAC init failed"))?;
-        mac.update(&secret);
-        secret = mac.finalize().into_bytes().to_vec();
+        mac.update(secret.as_slice());
+        *secret = mac.finalize().into_bytes().to_vec();
     }
 
     let params = Params::new(mem_kib, t, par.into(), Some(KEY_LEN))
@@ -219,8 +223,34 @@ fn derive_key(
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
     let mut out = [0u8; KEY_LEN];
     argon2
-        .hash_password_into(&secret, salt, &mut out)
+        .hash_password_into(secret.as_slice(), salt, &mut out)
         .map_err(|e| CoreError::new(DECRYPT_UNKNOWN_ERROR, format!("Argon2 error: {e}")))?;
+    Ok(out)
+}
+
+fn derive_header_auth_key(master_key: &[u8]) -> Result<[u8; KEY_LEN], CoreError> {
+    let mut mac = <HmacSha256 as Mac>::new_from_slice(master_key)
+        .map_err(|_| CoreError::new(DECRYPT_UNKNOWN_ERROR, "HMAC init failed"))?;
+    mac.update(HEADER_AUTH_CONTEXT);
+    let digest = mac.finalize().into_bytes();
+    let mut out = [0u8; KEY_LEN];
+    out.copy_from_slice(&digest[..KEY_LEN]);
+    Ok(out)
+}
+
+fn header_auth_tag(
+    master_key: &[u8],
+    prefix: &[u8],
+    hdr_crc: u32,
+) -> Result<[u8; HEADER_AUTH_TAG_LEN], CoreError> {
+    let auth_key = Zeroizing::new(derive_header_auth_key(master_key)?);
+    let mut mac = <HmacSha256 as Mac>::new_from_slice(auth_key.as_ref())
+        .map_err(|_| CoreError::new(DECRYPT_UNKNOWN_ERROR, "HMAC init failed"))?;
+    mac.update(prefix);
+    mac.update(&hdr_crc.to_be_bytes());
+    let digest = mac.finalize().into_bytes();
+    let mut out = [0u8; HEADER_AUTH_TAG_LEN];
+    out.copy_from_slice(&digest[..HEADER_AUTH_TAG_LEN]);
     Ok(out)
 }
 
@@ -307,6 +337,14 @@ struct HeaderParams {
     tag_len: u8,
     flags: u8,
     filename: String,
+}
+
+#[derive(Debug, Clone)]
+struct HeaderBlob {
+    hdr: Vec<u8>,
+    hdr_len: u16,
+    hdr_crc: u32,
+    hdr_auth: Option<[u8; HEADER_AUTH_TAG_LEN]>,
 }
 
 #[derive(Debug, Clone)]
@@ -472,7 +510,7 @@ fn parse_header(hdr: &[u8]) -> Result<HeaderParams, CoreError> {
     })
 }
 
-fn read_header_from_start(mut f: &File) -> io::Result<Option<(Vec<u8>, u16, u32)>> {
+fn read_header_from_start(mut f: &File) -> io::Result<Option<HeaderBlob>> {
     let mut magic = [0u8; 4];
     if f.read_exact(&mut magic).is_err() || &magic != MAGIC {
         return Ok(None);
@@ -501,10 +539,25 @@ fn read_header_from_start(mut f: &File) -> io::Result<Option<(Vec<u8>, u16, u32)
     if crc32_bytes(&prefix) != hdr_crc {
         return Ok(None);
     }
-    Ok(Some((hdr, hdr_len, hdr_crc)))
+    let version = hdr.first().copied().unwrap_or(0);
+    let hdr_auth = if version >= 4 {
+        let mut tag = [0u8; HEADER_AUTH_TAG_LEN];
+        if f.read_exact(&mut tag).is_err() {
+            return Ok(None);
+        }
+        Some(tag)
+    } else {
+        None
+    };
+    Ok(Some(HeaderBlob {
+        hdr,
+        hdr_len,
+        hdr_crc,
+        hdr_auth,
+    }))
 }
 
-fn read_header_from_end(mut f: &File) -> io::Result<Option<(Vec<u8>, u16, u32)>> {
+fn read_header_from_end(mut f: &File) -> io::Result<Option<HeaderBlob>> {
     let size = f.metadata()?.len();
     if size < 10 {
         return Ok(None);
@@ -520,19 +573,52 @@ fn read_header_from_end(mut f: &File) -> io::Result<Option<(Vec<u8>, u16, u32)>>
     if hdr_len == 0 || hdr_len as usize > MAX_HEADER_LEN {
         return Ok(None);
     }
-    f.seek(io::SeekFrom::End(-10))?;
-    let hdr_crc = f.read_u32::<BigEndian>()?;
-    f.seek(io::SeekFrom::End(-10 - hdr_len as i64))?;
-    let mut hdr = vec![0u8; hdr_len as usize];
-    f.read_exact(&mut hdr)?;
-    let mut prefix = Vec::with_capacity(6 + hdr.len());
-    prefix.extend_from_slice(MAGIC);
-    prefix.write_u16::<BigEndian>(hdr_len).unwrap();
-    prefix.extend_from_slice(&hdr);
-    if crc32_bytes(&prefix) != hdr_crc {
-        return Ok(None);
+
+    let mut try_layout = |with_auth: bool| -> io::Result<Option<HeaderBlob>> {
+        let trailer_overhead: i64 = if with_auth { 26 } else { 10 };
+        let total_needed = trailer_overhead as u64 + hdr_len as u64;
+        if size < total_needed {
+            return Ok(None);
+        }
+        let base_from_end = trailer_overhead + hdr_len as i64;
+        f.seek(io::SeekFrom::End(-base_from_end))?;
+        let mut hdr = vec![0u8; hdr_len as usize];
+        f.read_exact(&mut hdr)?;
+        let hdr_crc = f.read_u32::<BigEndian>()?;
+        let hdr_auth = if with_auth {
+            let mut tag = [0u8; HEADER_AUTH_TAG_LEN];
+            f.read_exact(&mut tag)?;
+            Some(tag)
+        } else {
+            None
+        };
+
+        let mut prefix = Vec::with_capacity(6 + hdr.len());
+        prefix.extend_from_slice(MAGIC);
+        prefix.write_u16::<BigEndian>(hdr_len).unwrap();
+        prefix.extend_from_slice(&hdr);
+        if crc32_bytes(&prefix) != hdr_crc {
+            return Ok(None);
+        }
+        let version = hdr.first().copied().unwrap_or(0);
+        if version >= 4 && !with_auth {
+            return Ok(None);
+        }
+        if version < 4 && with_auth {
+            return Ok(None);
+        }
+        Ok(Some(HeaderBlob {
+            hdr,
+            hdr_len,
+            hdr_crc,
+            hdr_auth,
+        }))
+    };
+
+    if let Some(h) = try_layout(true)? {
+        return Ok(Some(h));
     }
-    Ok(Some((hdr, hdr_len, hdr_crc)))
+    try_layout(false)
 }
 struct GfTables {
     inv: [u8; 256],
@@ -782,10 +868,61 @@ fn write_crc_copies(w: &mut dyn Write, data: &[u8]) -> io::Result<()> {
 }
 
 fn atomic_replace(tmp: &Path, target: &Path) -> io::Result<()> {
-    if target.exists() {
-        let _ = fs::remove_file(target);
+    if !target.exists() {
+        return fs::rename(tmp, target);
     }
-    fs::rename(tmp, target)
+
+    let parent = target.parent().unwrap_or_else(|| Path::new("."));
+    let backup_marker = NamedTempFile::new_in(parent)?;
+    let backup_path = backup_marker.path().to_path_buf();
+    drop(backup_marker);
+    let _ = fs::remove_file(&backup_path);
+
+    fs::rename(target, &backup_path)?;
+    match fs::rename(tmp, target) {
+        Ok(()) => {
+            let _ = fs::remove_file(&backup_path);
+            Ok(())
+        }
+        Err(e) => {
+            let _ = fs::rename(&backup_path, target);
+            Err(e)
+        }
+    }
+}
+
+fn header_data_offset(hdr_len: u16, version: u8) -> u64 {
+    let mut size = 4u64 + 2 + hdr_len as u64 + 4;
+    if version >= 4 {
+        size += HEADER_AUTH_TAG_LEN as u64;
+    }
+    size
+}
+
+fn verify_header_auth(
+    version: u8,
+    key: &[u8],
+    prefix: &[u8],
+    hdr_crc: u32,
+    hdr_auth: Option<[u8; HEADER_AUTH_TAG_LEN]>,
+) -> Result<(), CoreError> {
+    if version < 4 {
+        return Ok(());
+    }
+    let stored = hdr_auth.ok_or_else(|| {
+        CoreError::new(
+            DECRYPT_HEADER_INVALID,
+            "Missing header authentication tag for v4 file.",
+        )
+    })?;
+    let expected = header_auth_tag(key, prefix, hdr_crc)?;
+    if stored != expected {
+        return Err(CoreError::new(
+            DECRYPT_HEADER_AUTH_FAILED,
+            "Header authentication failed.",
+        ));
+    }
+    Ok(())
 }
 
 pub fn get_keyfile_hash_rs(path: &str) -> Result<Vec<u8>, CoreError> {
@@ -793,7 +930,52 @@ pub fn get_keyfile_hash_rs(path: &str) -> Result<Vec<u8>, CoreError> {
 }
 
 pub fn read_metadata_rs(path: &str) -> Result<MetaInfo, CoreError> {
-    let (params, _hdr, _hdr_len) = open_header(path)?;
+    let (params, _hdr, _hdr_len, _hdr_crc, _hdr_auth) = open_header(path)?;
+    Ok(meta_from_params(&params))
+}
+
+pub fn parse_header_blob_rs(blob: &[u8]) -> Result<MetaInfo, CoreError> {
+    if blob.len() < 10 {
+        return Err(CoreError::new(
+            DECRYPT_HEADER_INVALID,
+            "Blob too short for header.",
+        ));
+    }
+    if &blob[..4] != MAGIC {
+        return Err(CoreError::new(DECRYPT_HEADER_INVALID, "Invalid magic."));
+    }
+    let mut rdr = io::Cursor::new(&blob[4..]);
+    let hdr_len = rdr
+        .read_u16::<BigEndian>()
+        .map_err(|_| CoreError::new(DECRYPT_HEADER_INVALID, "Invalid header length."))?;
+    if hdr_len == 0 || hdr_len as usize > MAX_HEADER_LEN {
+        return Err(CoreError::new(
+            DECRYPT_HEADER_INVALID,
+            "Header length out of bounds.",
+        ));
+    }
+    let min = 4 + 2 + hdr_len as usize + 4;
+    if blob.len() < min {
+        return Err(CoreError::new(DECRYPT_HEADER_INVALID, "Truncated header blob."));
+    }
+    let hdr_start = 6;
+    let hdr_end = hdr_start + hdr_len as usize;
+    let hdr = &blob[hdr_start..hdr_end];
+    let mut crc_rdr = io::Cursor::new(&blob[hdr_end..hdr_end + 4]);
+    let hdr_crc = crc_rdr
+        .read_u32::<BigEndian>()
+        .map_err(|_| CoreError::new(DECRYPT_HEADER_INVALID, "Invalid header CRC field."))?;
+    let mut prefix = Vec::with_capacity(6 + hdr.len());
+    prefix.extend_from_slice(MAGIC);
+    prefix.write_u16::<BigEndian>(hdr_len).unwrap();
+    prefix.extend_from_slice(hdr);
+    if crc32_bytes(&prefix) != hdr_crc {
+        return Err(CoreError::new(
+            DECRYPT_HEADER_INVALID,
+            "Header CRC mismatch.",
+        ));
+    }
+    let params = parse_header(hdr)?;
     Ok(meta_from_params(&params))
 }
 
@@ -930,7 +1112,7 @@ pub fn encrypt_file_rs_controlled(
 
     validate_limits(k, r, shard_size, argon2_t, argon2_m, argon2_p, Some(num_blocks))?;
 
-    let (start_header, trailer, prefix, _hdr_len, _hdr_crc, salt, nonce_base, flags) =
+    let (start_header, base_trailer, prefix, _hdr_len, hdr_crc, salt, nonce_base, flags) =
         write_header(
             plain_size,
             stored_size,
@@ -944,7 +1126,22 @@ pub fn encrypt_file_rs_controlled(
             filename_meta.as_deref(),
         )?;
 
-    let key = derive_key(password, &salt, argon2_t, argon2_m, argon2_p, keyfile_hash)?;
+    let key = Zeroizing::new(derive_key(
+        password,
+        &salt,
+        argon2_t,
+        argon2_m,
+        argon2_p,
+        keyfile_hash,
+    )?);
+    let hdr_auth = header_auth_tag(key.as_ref(), &prefix, hdr_crc)?;
+    let mut start_header = start_header;
+    start_header.extend_from_slice(&hdr_auth);
+    let mut trailer = Vec::with_capacity(base_trailer.len() + HEADER_AUTH_TAG_LEN);
+    let trailer_split = base_trailer.len() - 6;
+    trailer.extend_from_slice(&base_trailer[..trailer_split]);
+    trailer.extend_from_slice(&hdr_auth);
+    trailer.extend_from_slice(&base_trailer[trailer_split..]);
 
     let out_dir = Path::new(output_file)
         .parent()
@@ -968,7 +1165,7 @@ pub fn encrypt_file_rs_controlled(
 
     if flags & HDR_FLAG_PWCHK != 0 {
         let nonce = nonce12(nonce_base, 0xFFFFFFFF, 0xFFFFFFFF);
-        let cipher = Aes256Gcm::new_from_slice(&key)
+        let cipher = Aes256Gcm::new_from_slice(key.as_ref())
             .map_err(|e| CoreError::new(DECRYPT_UNKNOWN_ERROR, e.to_string()))?;
         let ct = cipher
             .encrypt(
@@ -994,7 +1191,7 @@ pub fn encrypt_file_rs_controlled(
     }
 
     let g = build_generator_matrix(k, r)?;
-    let cipher = Aes256Gcm::new_from_slice(&key)
+    let cipher = Aes256Gcm::new_from_slice(key.as_ref())
         .map_err(|e| CoreError::new(DECRYPT_UNKNOWN_ERROR, e.to_string()))?;
 
     let block_size_usize = block_size as usize;
@@ -1288,7 +1485,7 @@ fn encrypt_file(
     validate_limits(k, r, shard_size, argon2_t, argon2_m, argon2_p, Some(num_blocks))
         .map_err(|e| PyRuntimeError::new_err(e.message))?;
 
-    let (start_header, trailer, prefix, _hdr_len, _hdr_crc, salt, nonce_base, flags) =
+    let (start_header, base_trailer, prefix, _hdr_len, hdr_crc, salt, nonce_base, flags) =
         write_header(
             plain_size,
             stored_size,
@@ -1310,8 +1507,19 @@ fn encrypt_file(
     } else {
         None
     };
-    let key = derive_key(password, &salt, argon2_t, argon2_m, argon2_p, kf_hash)
+    let key = Zeroizing::new(
+        derive_key(password, &salt, argon2_t, argon2_m, argon2_p, kf_hash)
+            .map_err(|e| PyRuntimeError::new_err(e.message))?,
+    );
+    let hdr_auth = header_auth_tag(key.as_ref(), &prefix, hdr_crc)
         .map_err(|e| PyRuntimeError::new_err(e.message))?;
+    let mut start_header = start_header;
+    start_header.extend_from_slice(&hdr_auth);
+    let mut trailer = Vec::with_capacity(base_trailer.len() + HEADER_AUTH_TAG_LEN);
+    let trailer_split = base_trailer.len() - 6;
+    trailer.extend_from_slice(&base_trailer[..trailer_split]);
+    trailer.extend_from_slice(&hdr_auth);
+    trailer.extend_from_slice(&base_trailer[trailer_split..]);
 
     let out_dir = Path::new(output_file)
         .parent()
@@ -1328,7 +1536,7 @@ fn encrypt_file(
 
     if flags & HDR_FLAG_PWCHK != 0 {
         let nonce = nonce12(nonce_base, 0xFFFFFFFF, 0xFFFFFFFF);
-        let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        let cipher = Aes256Gcm::new_from_slice(key.as_ref()).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         let ct = cipher
             .encrypt(
                 Nonce::from_slice(&nonce),
@@ -1347,7 +1555,7 @@ fn encrypt_file(
     }
 
     let g = build_generator_matrix(k, r).map_err(|e| PyRuntimeError::new_err(e.message))?;
-    let cipher = Aes256Gcm::new_from_slice(&key).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+    let cipher = Aes256Gcm::new_from_slice(key.as_ref()).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
     progress_call(py, &progress_cb, "encrypt", 0, num_blocks)
         .map_err(|e| PyRuntimeError::new_err(e.message))?;
 
@@ -1415,7 +1623,9 @@ fn encrypt_file(
     Ok(())
 }
 
-fn open_header(path: &str) -> Result<(HeaderParams, Vec<u8>, u16), CoreError> {
+fn open_header(
+    path: &str,
+) -> Result<(HeaderParams, Vec<u8>, u16, u32, Option<[u8; HEADER_AUTH_TAG_LEN]>), CoreError> {
     let f = File::open(path).map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
     let mut header = read_header_from_start(&f)
         .map_err(|e| CoreError::new(DECRYPT_HEADER_INVALID, e.to_string()))?;
@@ -1423,9 +1633,13 @@ fn open_header(path: &str) -> Result<(HeaderParams, Vec<u8>, u16), CoreError> {
         header = read_header_from_end(&f)
             .map_err(|e| CoreError::new(DECRYPT_HEADER_INVALID, e.to_string()))?;
     }
-    let (hdr, hdr_len, _hdr_crc) = header.ok_or_else(|| CoreError::new(DECRYPT_HEADER_INVALID, "Header not found."))?;
+    let header = header.ok_or_else(|| CoreError::new(DECRYPT_HEADER_INVALID, "Header not found."))?;
+    let hdr = header.hdr;
+    let hdr_len = header.hdr_len;
+    let hdr_crc = header.hdr_crc;
+    let hdr_auth = header.hdr_auth;
     let params = parse_header(&hdr)?;
-    Ok((params, hdr, hdr_len))
+    Ok((params, hdr, hdr_len, hdr_crc, hdr_auth))
 }
 fn decrypt_internal(
     py: Python,
@@ -1437,7 +1651,7 @@ fn decrypt_internal(
     cancel_event: Option<Py<PyAny>>,
     progress_cb: Option<Py<PyAny>>,
 ) -> Result<HeaderParams, CoreError> {
-    let (params, hdr, hdr_len) = open_header(input_file)?;
+    let (params, hdr, hdr_len, hdr_crc, hdr_auth) = open_header(input_file)?;
     if params.version > VERSION_U8 {
         return Err(CoreError::new(
             DECRYPT_HEADER_INVALID,
@@ -1472,18 +1686,18 @@ fn decrypt_internal(
     prefix.extend_from_slice(&hdr);
 
     let pwchk_present = params.flags & HDR_FLAG_PWCHK != 0;
-    let header_size = 4 + 2 + hdr_len as usize + 4;
-    let mut data_offset = header_size as u64;
+    let mut data_offset = header_data_offset(hdr_len, params.version);
 
-    let key = derive_key(
+    let key = Zeroizing::new(derive_key(
         password,
         &params.salt,
         params.argon2_time,
         params.argon2_mem_kib,
         params.argon2_par,
         keyfile_hash,
-    )?;
-    let cipher = Aes256Gcm::new_from_slice(&key)
+    )?);
+    verify_header_auth(params.version, key.as_ref(), &prefix, hdr_crc, hdr_auth)?;
+    let cipher = Aes256Gcm::new_from_slice(key.as_ref())
         .map_err(|e| CoreError::new(DECRYPT_UNKNOWN_ERROR, e.to_string()))?;
 
     let mut f_in = BufReader::new(File::open(input_file).map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?);
@@ -1623,7 +1837,7 @@ fn decrypt_internal_rs_controlled(
     control: Option<&ControlFlags>,
     mut progress: Option<&mut dyn FnMut(&str, u64, u64)>,
 ) -> Result<HeaderParams, CoreError> {
-    let (params, hdr, hdr_len) = open_header(input_file)?;
+    let (params, hdr, hdr_len, hdr_crc, hdr_auth) = open_header(input_file)?;
     if params.version > VERSION_U8 {
         return Err(CoreError::new(
             DECRYPT_HEADER_INVALID,
@@ -1658,18 +1872,18 @@ fn decrypt_internal_rs_controlled(
     prefix.extend_from_slice(&hdr);
 
     let pwchk_present = params.flags & HDR_FLAG_PWCHK != 0;
-    let header_size = 4 + 2 + hdr_len as usize + 4;
-    let mut data_offset = header_size as u64;
+    let mut data_offset = header_data_offset(hdr_len, params.version);
 
-    let key = derive_key(
+    let key = Zeroizing::new(derive_key(
         password,
         &params.salt,
         params.argon2_time,
         params.argon2_mem_kib,
         params.argon2_par,
         keyfile_hash,
-    )?;
-    let cipher = Aes256Gcm::new_from_slice(&key)
+    )?);
+    verify_header_auth(params.version, key.as_ref(), &prefix, hdr_crc, hdr_auth)?;
+    let cipher = Aes256Gcm::new_from_slice(key.as_ref())
         .map_err(|e| CoreError::new(DECRYPT_UNKNOWN_ERROR, e.to_string()))?;
 
     let mut f_in =
@@ -1811,7 +2025,7 @@ fn verify_internal_rs_controlled(
     control: Option<&ControlFlags>,
     mut progress: Option<&mut dyn FnMut(&str, u64, u64)>,
 ) -> Result<HeaderParams, CoreError> {
-    let (params, hdr, hdr_len) = open_header(input_file)?;
+    let (params, hdr, hdr_len, hdr_crc, hdr_auth) = open_header(input_file)?;
     if params.version > VERSION_U8 || params.version < 1 {
         return Err(CoreError::new(
             DECRYPT_HEADER_INVALID,
@@ -1841,18 +2055,18 @@ fn verify_internal_rs_controlled(
     prefix.extend_from_slice(&hdr);
 
     let pwchk_present = params.flags & HDR_FLAG_PWCHK != 0;
-    let header_size = 4 + 2 + hdr_len as usize + 4;
-    let mut data_offset = header_size as u64;
+    let mut data_offset = header_data_offset(hdr_len, params.version);
 
-    let key = derive_key(
+    let key = Zeroizing::new(derive_key(
         password,
         &params.salt,
         params.argon2_time,
         params.argon2_mem_kib,
         params.argon2_par,
         keyfile_hash,
-    )?;
-    let cipher = Aes256Gcm::new_from_slice(&key)
+    )?);
+    verify_header_auth(params.version, key.as_ref(), &prefix, hdr_crc, hdr_auth)?;
+    let cipher = Aes256Gcm::new_from_slice(key.as_ref())
         .map_err(|e| CoreError::new(DECRYPT_UNKNOWN_ERROR, e.to_string()))?;
 
     let mut f_in =
@@ -2122,7 +2336,7 @@ fn verify_internal(
     cancel_event: Option<Py<PyAny>>,
     progress_cb: Option<Py<PyAny>>,
 ) -> Result<HeaderParams, CoreError> {
-    let (params, hdr, hdr_len) = open_header(input_file)?;
+    let (params, hdr, hdr_len, hdr_crc, hdr_auth) = open_header(input_file)?;
     if params.version > VERSION_U8 || params.version < 1 {
         return Err(CoreError::new(
             DECRYPT_HEADER_INVALID,
@@ -2152,18 +2366,18 @@ fn verify_internal(
     prefix.extend_from_slice(&hdr);
 
     let pwchk_present = params.flags & HDR_FLAG_PWCHK != 0;
-    let header_size = 4 + 2 + hdr_len as usize + 4;
-    let mut data_offset = header_size as u64;
+    let mut data_offset = header_data_offset(hdr_len, params.version);
 
-    let key = derive_key(
+    let key = Zeroizing::new(derive_key(
         password,
         &params.salt,
         params.argon2_time,
         params.argon2_mem_kib,
         params.argon2_par,
         keyfile_hash,
-    )?;
-    let cipher = Aes256Gcm::new_from_slice(&key)
+    )?);
+    verify_header_auth(params.version, key.as_ref(), &prefix, hdr_crc, hdr_auth)?;
+    let cipher = Aes256Gcm::new_from_slice(key.as_ref())
         .map_err(|e| CoreError::new(DECRYPT_UNKNOWN_ERROR, e.to_string()))?;
 
     let mut f_in = BufReader::new(File::open(input_file).map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?);
@@ -2257,7 +2471,8 @@ fn verify_internal(
 
 #[pyfunction]
 fn read_metadata(path: &str) -> PyResult<PyObject> {
-    let (params, _hdr, _hdr_len) = open_header(path).map_err(|e| PyRuntimeError::new_err(e.message))?;
+    let (params, _hdr, _hdr_len, _hdr_crc, _hdr_auth) =
+        open_header(path).map_err(|e| PyRuntimeError::new_err(e.message))?;
     Python::with_gil(|py| {
         let dict = PyDict::new(py);
         dict.set_item("filename", params.filename)?;

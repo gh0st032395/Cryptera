@@ -1,7 +1,0 @@
-pycryptodome
-argon2-cffi
-numpy
-customtkinter
-pytest
-ruff
-mypy

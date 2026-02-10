@@ -1,6 +1,21 @@
-let statusText = null;
-let progressFill = null;
-let progressValue = null;
+﻿import {
+  invoke,
+  eventApi,
+  pickFile,
+  pickFolder,
+  pickSave,
+  bindWindowControls,
+} from "./modules/tauri-bridge.js";
+import { translations } from "./modules/i18n.js";
+import {
+  state,
+  setStatus,
+  setProgress,
+  setBusy,
+  updateMode,
+  renderMetaTo,
+} from "./modules/ui-state.js";
+
 let pauseBtn = null;
 let cancelBtn = null;
 let resetBtn = null;
@@ -17,196 +32,7 @@ window.addEventListener("unhandledrejection", (e) => {
   console.error("Promise error:", e);
 });
 
-const tauri = window.__TAURI__ || {};
-const invoke = tauri?.core?.invoke || tauri?.tauri?.invoke || tauri?.invoke;
-const eventApi = tauri?.event || tauri?.core?.event || tauri?.tauri?.event;
-const windowApi = tauri?.window || tauri?.core?.window;
 
-const translations = {
-  en: {
-    nav_encrypt: "Encrypt",
-    nav_decrypt: "Decrypt",
-    nav_verify: "Verify",
-    nav_about: "About",
-    hero_title: "Secure Data, Accelerated Workflow.",
-    hero_subtitle: "Local-first encryption powered by Rust. Precision control, zero knowledge.",
-    metric_engine: "Core Engine",
-    metric_mode: "Operation Mode",
-    metric_local: "Local Device",
-    panel_encrypt_title: "Encryption",
-    panel_encrypt_desc: "Secure files or directories with advanced cryptography.",
-    card_source: "Input Selection",
-    seg_file: "Single File",
-    seg_folder: "Directory",
-    label_file_path: "Source File",
-    btn_choose: "Select...",
-    label_folder_path: "Source Directory",
-    label_output_file: "Destination File",
-    btn_save_as: "Browse...",
-    card_security: "Security Parameters",
-    label_password: "Encryption Password",
-    label_keyfile: "Keyfile (Optional)",
-    label_sec_profile: "Security Profile",
-    opt_standard: "Standard",
-    opt_strong: "High",
-    opt_paranoid: "Maximum",
-    label_int_profile: "Redundancy Level",
-    opt_medium: "Balanced",
-    opt_low: "Low Overhead",
-    opt_high: "High Redundancy",
-    opt_max: "Max Resilience",
-    card_options: "Processing Options",
-    label_file_comp: "Pre-compression",
-    opt_none: "None",
-    opt_zlib: "Deflate (Docs)",
-    opt_lzma: "LZMA2 (Best)",
-    label_folder_comp: "Archive Compression",
-    opt_gz: "Gzip (Fast)",
-    opt_bz2: "Bzip2 (Ratio)",
-    opt_xz: "XZ (Best)",
-    check_skip_special: "exclude symbolic links & system files",
-    check_pwchk: "Enable fast password verification",
-    check_hide_filename: "Do not store filename (Anonymous Mode)",
-    btn_start_enc: "Execute Encryption",
-    panel_decrypt_title: "Decryption",
-    panel_decrypt_desc: "Restore original data from encrypted containers.",
-    label_encrypted_file: "Source Encrypted File",
-    label_output_path: "Destination Folder",
-    btn_select: "Select...",
-    meta_title: "File Metadata",
-    meta_empty: "No metadata loaded. Select a file to analyze.",
-    btn_read_meta: "Analyze Metadata",
-    card_credentials: "Decryption Credentials",
-    check_auto_extract: "Auto-extract archives upon completion",
-    check_keep_tar: "Retain intermediate TAR archive",
-    btn_start_dec: "Execute Decryption",
-    panel_verify_title: "Integrity Check",
-    panel_verify_desc: "Validate file integrity without performing decryption.",
-    card_target: "Target Analysis",
-    btn_run_ver: "Run Integrity Check",
-    panel_about_title: "System Info",
-    panel_about_desc: "Architecture and version details.",
-    about_text: "CryptoV2 is a high-performance local encryption utility powered by Rust. It leverages AES-GCM-256 and Argon2id relative to erasure coding for maximum resilience. Zero cloud dependencies, absolute privacy.",
-    label_language: "Interface Language",
-
-    // Tooltips
-    tooltip_sec_standard: "Argon2id: 3 passes, 64MB RAM. Standard security suitable for most use cases.",
-    tooltip_sec_strong: "Argon2id: 6 passes, 256MB RAM. Enhanced protection against hardware brute-force.",
-    tooltip_sec_paranoid: "Argon2id: 10 passes, 512MB RAM. Maximum derivation cost; slower but extremely secure.",
-    tooltip_int_profile: "Controls the ratio of parity shards to data shards for error recovery.",
-    tooltip_int_medium: "24 Data / 8 Parity. Recovers from 25% corruption. Balanced overhead.",
-    tooltip_int_low: "28 Data / 4 Parity. Recovers from 12% corruption. Minimal space overhead.",
-    tooltip_int_high: "12 Data / 12 Parity. Recovers from 50% corruption. High reliability.",
-    tooltip_int_max: "8 Data / 24 Parity. Recovers from 75% corruption. Extreme redundancy.",
-    tooltip_file_comp: "Compression algorithm applied before encryption.",
-    tooltip_file_comp_none: "No compression. Fastest processing.",
-    tooltip_file_comp_zlib: "Standard Deflate compression. Efficient for text/documents.",
-    tooltip_file_comp_lzma: "High-ratio LZMA2 compression. Slower but most effective.",
-    tooltip_folder_comp: "Compression algorithm used for the folder archive container.",
-    tooltip_folder_comp_none: "No compression. Store only.",
-    tooltip_folder_comp_gz: "Gzip compression. Fast and widely compatible.",
-    tooltip_folder_comp_bz2: "Bzip2 compression. Better ratio than Gzip.",
-    tooltip_folder_comp_xz: "XZ/LZMA compression. Maximum reduction, higher CPU usage.",
-    tooltip_skip_special: "Prevents errors by skipping symbolic links, sockets, and device nodes.",
-    tooltip_enable_pwchk: "Stores a hash in the header to confirm password correctness instantly before decryption.",
-    tooltip_hide_filename: "Prevents storing the original filename in the header. You will need to rename the decrypted file manually.",
-  },
-  it: {
-    nav_encrypt: "Cifra",
-    nav_decrypt: "Decifra",
-    nav_verify: "Verifica",
-    nav_about: "Info",
-    hero_title: "Protezione Dati, Flusso Rapido.",
-    hero_subtitle: "Cifratura locale basata su Rust. Controllo totale, privacy assoluta.",
-    metric_engine: "Motore Core",
-    metric_mode: "Modalità",
-    metric_local: "Locale",
-    panel_encrypt_title: "Cifratura",
-    panel_encrypt_desc: "Proteggi file o directory con crittografia avanzata.",
-    card_source: "Selezione Input",
-    seg_file: "File Singolo",
-    seg_folder: "Directory",
-    label_file_path: "File Sorgente",
-    btn_choose: "Seleziona...",
-    label_folder_path: "Directory Sorgente",
-    label_output_file: "File di Destinazione",
-    btn_save_as: "Sfoglia...",
-    card_security: "Parametri di Sicurezza",
-    label_password: "Password di Cifratura",
-    label_keyfile: "File Chiave (Opzionale)",
-    label_sec_profile: "Profilo di Sicurezza",
-    opt_standard: "Standard",
-    opt_strong: "Alta",
-    opt_paranoid: "Massima",
-    label_int_profile: "Livello Ridondanza",
-    opt_medium: "Bilanciato",
-    opt_low: "Basso Overhead",
-    opt_high: "Alta Ridondanza",
-    opt_max: "Resilienza Max",
-    card_options: "Opzioni di Processo",
-    label_file_comp: "Pre-compressione",
-    opt_none: "Nessuna",
-    opt_zlib: "Deflate (Docs)",
-    opt_lzma: "LZMA2 (Best)",
-    label_folder_comp: "Compressione Archivio",
-    opt_gz: "Gzip (Veloce)",
-    opt_bz2: "Bzip2 (Ratio)",
-    opt_xz: "XZ (Best)",
-    check_skip_special: "Escludi link simbolici e file di sistema",
-    check_pwchk: "Abilita verifica rapida password",
-    check_hide_filename: "Non salvare il nome file (Anonimo)",
-    btn_start_enc: "Esegui Cifratura",
-    panel_decrypt_title: "Decifratura",
-    panel_decrypt_desc: "Ripristina i dati originali dai contenitori cifrati.",
-    label_encrypted_file: "File Cifrato Sorgente",
-    label_output_path: "Cartella di Destinazione",
-    btn_select: "Seleziona...",
-    meta_title: "Metadati File",
-    meta_empty: "Nessun metadato. Seleziona un file per l'analisi.",
-    btn_read_meta: "Analizza Metadati",
-    card_credentials: "Credenziali Decifratura",
-    check_auto_extract: "Estrai automaticamente archivi al termine",
-    check_keep_tar: "Mantieni l'archivio intermedio TAR",
-    btn_start_dec: "Esegui Decifratura",
-    panel_verify_title: "Controllo Integrità",
-    panel_verify_desc: "Verifica l'integrità del file senza decifrarlo.",
-    card_target: "Analisi Target",
-    btn_run_ver: "Avvia Verifica",
-    panel_about_title: "Informazioni",
-    panel_about_desc: "Dettagli versione e architettura.",
-    about_text: "CryptoV2 è un'utility di cifratura ad alte prestazioni. Utilizza AES-GCM-256 e Argon2id con codifica di cancellazione (Reed-Solomon) per garantire la massima resilienza dei dati. Zero dipendenze cloud, privacy locale assoluta.",
-    label_language: "Lingua Interfaccia",
-
-    // Tooltips
-    tooltip_sec_standard: "Argon2id: 3 passaggi, 64MB RAM. Sicurezza standard adatta alla maggior parte dei casi.",
-    tooltip_sec_strong: "Argon2id: 6 passaggi, 256MB RAM. Protezione avanzata contro attacchi hardware.",
-    tooltip_sec_paranoid: "Argon2id: 10 passaggi, 512MB RAM. Costo di derivazione massimo; più lento ma estremamente sicuro.",
-    tooltip_int_profile: "Controlla il rapporto tra frammenti di parità e dati per il recupero errori.",
-    tooltip_int_medium: "24 Dati / 8 Parità. Recupera fino al 25% di corruzione. Overhead bilanciato.",
-    tooltip_int_low: "28 Dati / 4 Parità. Recupera fino al 12% di corruzione. Minimo spazio extra.",
-    tooltip_int_high: "12 Dati / 12 Parità. Recupera fino al 50% di corruzione. Alta affidabilità.",
-    tooltip_int_max: "8 Dati / 24 Parità. Recupera fino al 75% di corruzione. Ridondanza estrema.",
-    tooltip_file_comp: "Algoritmo di compressione applicato al file prima della cifratura.",
-    tooltip_file_comp_none: "Nessuna compressione. Elaborazione più veloce.",
-    tooltip_file_comp_zlib: "Compressione Deflate standard. Efficiente per testi/documenti.",
-    tooltip_file_comp_lzma: "Compressione LZMA2 ad alto rapporto. Più lento ma molto efficace.",
-    tooltip_folder_comp: "Algoritmo di compressione usato per il contenitore della cartella.",
-    tooltip_folder_comp_none: "Nessuna compressione. Archiviazione diretta.",
-    tooltip_folder_comp_gz: "Compressione Gzip. Veloce e ampiamente compatibile.",
-    tooltip_folder_comp_bz2: "Compressione Bzip2. Rapporto migliore di Gzip.",
-    tooltip_folder_comp_xz: "Compressione XZ/LZMA. Riduzione massima, uso CPU più alto.",
-    tooltip_skip_special: "Previene errori saltando link simbolici, socket e nodi di dispositivo.",
-    tooltip_enable_pwchk: "Memorizza un hash nell'header per confermare istantaneamente la password prima della decifratura.",
-    tooltip_hide_filename: "Non include il nome originale nell'header cifrato. Il file decifrato dovrà essere rinominato a mano.",
-  }
-};
-
-const state = {
-  busy: false,
-  paused: false,
-  mode: "file",
-  language: "en",
-};
 
 let encFile = null;
 let encFolder = null;
@@ -233,82 +59,7 @@ let verMetaContent = null;
 let verFile = null;
 let verPassword = null;
 let verKeyfile = null;
-
-function setStatus(text) {
-  if (!statusText) {
-    statusText = document.getElementById("statusText");
-  }
-  if (!statusText) return;
-  statusText.textContent = text;
-}
-
-function setProgress(percent) {
-  if (!progressFill || !progressValue) {
-    progressFill = document.getElementById("progressFill");
-    progressValue = document.getElementById("progressValue");
-  }
-  if (!progressFill || !progressValue) return;
-  const safe = Math.max(0, Math.min(1, percent || 0));
-  progressFill.style.width = `${Math.round(safe * 100)}%`;
-  progressValue.textContent = `${Math.round(safe * 100)}%`;
-}
-
-function setBusy(value) {
-  state.busy = value;
-  document.querySelectorAll("button").forEach((btn) => {
-    if (btn.classList.contains("ghost")) return;
-    btn.disabled = value;
-  });
-  if (!pauseBtn || !cancelBtn) {
-    pauseBtn = document.getElementById("pauseBtn");
-    cancelBtn = document.getElementById("cancelBtn");
-  }
-  if (pauseBtn) pauseBtn.disabled = !value;
-  if (cancelBtn) cancelBtn.disabled = !value;
-}
-
-function updateMode(mode) {
-  state.mode = mode;
-  document.querySelectorAll(".seg").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.mode === mode);
-  });
-  if (encFile) encFile.disabled = mode !== "file";
-  if (encFolder) encFolder.disabled = mode !== "folder";
-  const encFileBtn = document.getElementById("encFileBtn");
-  const encFolderBtn = document.getElementById("encFolderBtn");
-  if (encFileBtn) encFileBtn.disabled = mode !== "file";
-  if (encFolderBtn) encFolderBtn.disabled = mode !== "folder";
-}
-
-async function pickFile(target, defaultPath = null) {
-  if (!invoke) return;
-  try {
-    const selected = await invoke("open_file_dialog", { defaultPath });
-    if (selected) target.value = selected;
-  } catch (err) {
-    setStatus(String(err));
-  }
-}
-
-async function pickFolder(target, defaultPath = null) {
-  if (!invoke) return;
-  try {
-    const selected = await invoke("open_folder_dialog", { defaultPath });
-    if (selected) target.value = selected;
-  } catch (err) {
-    setStatus(String(err));
-  }
-}
-
-async function pickSave(target, defaultPath = null) {
-  if (!invoke) return;
-  try {
-    const selected = await invoke("save_file_dialog", { defaultPath });
-    if (selected) target.value = selected;
-  } catch (err) {
-    setStatus(String(err));
-  }
-}
+let progressEventsBound = false;
 
 function bindNavigation() {
   document.querySelectorAll(".nav-item").forEach((btn) => {
@@ -321,19 +72,6 @@ function bindNavigation() {
       });
     });
   });
-}
-
-function bindWindowControls() {
-  if (!windowApi) {
-    console.error("Window API not found");
-    return;
-  }
-  const appWindow = windowApi.getCurrentWindow();
-  if (!appWindow) return;
-
-  document.getElementById("titlebar-minimize")?.addEventListener("click", () => appWindow.minimize());
-  document.getElementById("titlebar-maximize")?.addEventListener("click", () => appWindow.toggleMaximize());
-  document.getElementById("titlebar-close")?.addEventListener("click", () => appWindow.close());
 }
 
 function bindEvents() {
@@ -610,35 +348,6 @@ function renderMeta(meta) {
   renderMetaTo(metaContent, meta);
 }
 
-function renderMetaTo(target, meta) {
-  if (!target) return;
-  if (!meta) {
-    target.textContent = "No metadata available.";
-    return;
-  }
-  const isContainer = (meta.flags & 32) !== 0;
-  const typeLabel = isContainer ? "Archive (Folder)" : "Single File";
-
-  target.innerHTML = "";
-
-  const createLine = (label, value) => {
-    const div = document.createElement("div");
-    const strong = document.createElement("strong");
-    strong.textContent = label + ": ";
-    div.appendChild(strong);
-    div.appendChild(document.createTextNode(value));
-    return div;
-  };
-
-  target.appendChild(createLine("Type", typeLabel));
-  target.appendChild(createLine("Filename", meta.filename || "(hidden)"));
-  target.appendChild(createLine("Version", meta.version));
-  target.appendChild(createLine("Shard", `${meta.shard_size} bytes`));
-  target.appendChild(createLine("K/R", `${meta.k} / ${meta.r}`));
-  target.appendChild(createLine("Plain size", `${meta.plain_size} bytes`));
-  target.appendChild(createLine("Stored size", `${meta.stored_size} bytes`));
-}
-
 async function checkFileMetadata(path) {
   if (!invoke || !path) return;
   try {
@@ -683,6 +392,8 @@ async function checkFileMetadata(path) {
 }
 
 async function bindProgressEvents() {
+  if (progressEventsBound) return;
+  progressEventsBound = true;
   if (!eventApi || !eventApi.listen) {
     console.warn("Event API not available, skipping drag-drop bind.");
     return;
@@ -782,7 +493,7 @@ async function bindProgressEvents() {
 
   } catch (err) {
     console.error("Event bind error:", err);
-    if (statusText) statusText.textContent = "DnD Bind Error";
+    setStatus("DnD Bind Error");
   }
 }
 
@@ -963,10 +674,7 @@ async function handleReadVerifyMeta() {
 
 function bootInit() {
   try {
-    statusText = document.getElementById("statusText");
-    if (statusText) statusText.textContent = "JS loaded";
-    progressFill = document.getElementById("progressFill");
-    progressValue = document.getElementById("progressValue");
+    setStatus("JS loaded");
     pauseBtn = document.getElementById("pauseBtn");
     cancelBtn = document.getElementById("cancelBtn");
     resetBtn = document.getElementById("resetBtn");
@@ -1001,7 +709,6 @@ function bootInit() {
     bindWindowControls();
     bindEvents();
     bindProgressEvents();
-    bindProgressEvents();
     setupTooltips(); // Init tooltips
     setupCustomSelects(); // Init custom selects
     if (!assertBackendApi()) return;
@@ -1024,3 +731,4 @@ if (document.readyState === "loading") {
 } else {
   bootInit();
 }
+
