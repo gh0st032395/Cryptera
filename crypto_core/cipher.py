@@ -312,9 +312,6 @@ def decrypt_file_ex(input_file: str, output_file: str, password: str,
                     control_event: threading.Event = None,
                     progress_cb: Optional[ProgressCallback] = None) -> Tuple[bool, str, str, dict]:
     
-    global LAST_DECRYPT_STATUS, LAST_DECRYPT_MESSAGE
-    LAST_DECRYPT_STATUS, LAST_DECRYPT_MESSAGE = DECRYPT_OK, ""
-    
     metadata = {}
 
     tmp_name = None
@@ -492,3 +489,23 @@ def decrypt_file_ex(input_file: str, output_file: str, password: str,
 def decrypt_file(input_file: str, output_file: str, password: str, progress_cb=None):
     ok, _, _, _ = decrypt_file_ex(input_file, output_file, password, progress_cb=progress_cb)
     return ok
+
+
+def verify_file(input_file: str, password: str, keyfile: bytes = None,
+                progress_cb: Optional[ProgressCallback] = None) -> Tuple[bool, str, str, dict]:
+    """Verify file integrity and authentication without writing decrypted output."""
+    fd, tmp = tempfile.mkstemp(prefix="cryptov2_verify_")
+    os.close(fd)
+    try:
+        return decrypt_file_ex(
+            input_file=input_file,
+            output_file=tmp,
+            password=password,
+            keyfile=keyfile,
+            progress_cb=progress_cb,
+        )
+    finally:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass

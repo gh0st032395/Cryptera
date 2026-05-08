@@ -97,9 +97,6 @@ DECRYPT_TRUNCATED = "TRUNCATED"
 DECRYPT_IO_ERROR = "IO_ERROR"
 DECRYPT_UNKNOWN_ERROR = "UNKNOWN_ERROR"
 
-LAST_DECRYPT_STATUS = DECRYPT_OK
-LAST_DECRYPT_MESSAGE = ""
-
 # =========================
 # UI Profiles
 # =========================

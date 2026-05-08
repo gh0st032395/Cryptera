@@ -1,1 +1,2 @@
-from .cipher import encrypt_file, decrypt_file, decrypt_file_ex
+from .cipher import encrypt_file, decrypt_file, decrypt_file_ex, verify_file
+from .audit import AuditLogger
