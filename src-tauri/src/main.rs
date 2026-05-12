@@ -2,19 +2,14 @@
 
 mod audit;
 
+use secrecy::{ExposeSecret, Secret};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
-use secrecy::{Secret, ExposeSecret};
+use std::sync::{Arc, Mutex};
 
 use crypto_core_rs::{
-    decrypt_file_ex_rs_controlled,
-    encrypt_file_rs_controlled,
-    get_keyfile_hash_rs,
-    read_metadata_rs,
-    verify_file_integrity_rs_controlled,
-    ControlFlags,
-    MetaInfo,
+    decrypt_file_ex_rs_controlled, encrypt_file_rs_controlled, get_keyfile_hash_rs,
+    read_metadata_rs, verify_file_integrity_rs_controlled, ControlFlags, MetaInfo,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
@@ -30,7 +25,10 @@ struct AuditState {
     logger: Mutex<audit::AuditLogger>,
 }
 
-fn set_active_control(state: &tauri::State<'_, AppState>, ctrl: ControlFlags) -> Result<(), String> {
+fn set_active_control(
+    state: &tauri::State<'_, AppState>,
+    ctrl: ControlFlags,
+) -> Result<(), String> {
     let mut guard = state
         .control
         .lock()
@@ -237,8 +235,14 @@ fn create_tar(
 
     let file = tmp.reopen().map_err(|e| e.to_string())?;
     let writer: Box<dyn std::io::Write> = match comp {
-        "gz" => Box::new(flate2::write::GzEncoder::new(file, flate2::Compression::default())),
-        "bz2" => Box::new(bzip2::write::BzEncoder::new(file, bzip2::Compression::default())),
+        "gz" => Box::new(flate2::write::GzEncoder::new(
+            file,
+            flate2::Compression::default(),
+        )),
+        "bz2" => Box::new(bzip2::write::BzEncoder::new(
+            file,
+            bzip2::Compression::default(),
+        )),
         "xz" => Box::new(xz2::write::XzEncoder::new(file, 6)),
         _ => Box::new(file),
     };
@@ -292,7 +296,9 @@ fn create_tar(
         };
 
         if entry.file_type().is_dir() {
-            builder.append_dir(&tar_path, path).map_err(|e| e.to_string())?;
+            builder
+                .append_dir(&tar_path, path)
+                .map_err(|e| e.to_string())?;
         } else if entry.file_type().is_file() {
             builder
                 .append_path_with_name(path, &tar_path)
@@ -300,7 +306,7 @@ fn create_tar(
         }
     }
 
-    if let Some(cb) = progress.as_deref_mut() {
+    if let Some(cb) = progress.as_mut() {
         cb(count);
     }
 
@@ -313,15 +319,16 @@ fn safe_extract_tar(tar_path: &str, out_dir: &str) -> Result<(), std::io::Error>
     let file = std::fs::File::open(tar_path)?;
 
     let path_str = tar_path.to_lowercase();
-    let decoder: Box<dyn std::io::Read> = if path_str.ends_with(".tar.gz") || path_str.ends_with(".tgz") {
-        Box::new(flate2::read::GzDecoder::new(file))
-    } else if path_str.ends_with(".tar.bz2") || path_str.ends_with(".tbz2") {
-        Box::new(bzip2::read::BzDecoder::new(file))
-    } else if path_str.ends_with(".tar.xz") || path_str.ends_with(".txz") {
-        Box::new(xz2::read::XzDecoder::new(file))
-    } else {
-        Box::new(file)
-    };
+    let decoder: Box<dyn std::io::Read> =
+        if path_str.ends_with(".tar.gz") || path_str.ends_with(".tgz") {
+            Box::new(flate2::read::GzDecoder::new(file))
+        } else if path_str.ends_with(".tar.bz2") || path_str.ends_with(".tbz2") {
+            Box::new(bzip2::read::BzDecoder::new(file))
+        } else if path_str.ends_with(".tar.xz") || path_str.ends_with(".txz") {
+            Box::new(xz2::read::XzDecoder::new(file))
+        } else {
+            Box::new(file)
+        };
 
     let mut archive = tar::Archive::new(decoder);
 
@@ -330,18 +337,24 @@ fn safe_extract_tar(tar_path: &str, out_dir: &str) -> Result<(), std::io::Error>
         let path = entry.path()?;
 
         // Prevent Zip Slip
-        if path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
-             return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Zip Slip attempt detected"));
+        if path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Zip Slip attempt detected",
+            ));
         }
 
         if path.is_absolute() {
             continue;
         }
-        
+
         // Prevent Windows UNC / Drive letters
         let path_lossy = path.to_string_lossy();
         if path_lossy.contains(':') || path_lossy.starts_with(r"\\") {
-             continue;
+            continue;
         }
 
         // Skip Symlinks/Hardlinks as per policy
@@ -350,14 +363,17 @@ fn safe_extract_tar(tar_path: &str, out_dir: &str) -> Result<(), std::io::Error>
         }
 
         // Double check destination (validation done by unpack_in)
-        entry.unpack_in(&out_dir)?; 
+        entry.unpack_in(&out_dir)?;
     }
     Ok(())
 }
 
 #[tauri::command]
 fn set_pause(pause: bool, state: tauri::State<AppState>) -> Result<(), String> {
-    let guard = state.control.lock().map_err(|_| "State lock failed".to_string())?;
+    let guard = state
+        .control
+        .lock()
+        .map_err(|_| "State lock failed".to_string())?;
     if let Some(ctrl) = guard.as_ref() {
         ctrl.pause.store(pause, Ordering::SeqCst);
         Ok(())
@@ -368,7 +384,10 @@ fn set_pause(pause: bool, state: tauri::State<AppState>) -> Result<(), String> {
 
 #[tauri::command]
 fn cancel_job(state: tauri::State<AppState>) -> Result<(), String> {
-    let guard = state.control.lock().map_err(|_| "State lock failed".to_string())?;
+    let guard = state
+        .control
+        .lock()
+        .map_err(|_| "State lock failed".to_string())?;
     if let Some(ctrl) = guard.as_ref() {
         ctrl.cancel.store(true, Ordering::SeqCst);
         Ok(())
@@ -429,14 +448,27 @@ async fn encrypt(
         let (k, r) = int_profile_params(&req.int_profile);
 
         if !req.input_folder.is_empty() {
-            emit_status(&window_clone, "backend_enc_archiving", "Creating archive...");
+            emit_status(
+                &window_clone,
+                "backend_enc_archiving",
+                "Creating archive...",
+            );
             let mut archive_progress = |done: u64| {
                 emit_progress(&window_clone, "archiving", done, 0);
             };
-            let (tmp_tar, base_name) =
-                create_tar(Path::new(&req.input_folder), &req.folder_comp, req.skip_special, &ctrl, Some(&mut archive_progress))?;
+            let (tmp_tar, base_name) = create_tar(
+                Path::new(&req.input_folder),
+                &req.folder_comp,
+                req.skip_special,
+                &ctrl,
+                Some(&mut archive_progress),
+            )?;
             let tar_path = tmp_tar.path().to_string_lossy().to_string();
-            let original_name = if req.hide_filename { Some("") } else { Some(base_name.as_str()) };
+            let original_name = if req.hide_filename {
+                Some("")
+            } else {
+                Some(base_name.as_str())
+            };
             let mut progress = |stage: &str, done: u64, total: u64| {
                 emit_progress(&window_clone, stage, done, total);
             };
@@ -460,7 +492,11 @@ async fn encrypt(
             )
             .map_err(|e| e.message)?;
         } else {
-            let comp = if req.file_comp == "none" { None } else { Some(req.file_comp.as_str()) };
+            let comp = if req.file_comp == "none" {
+                None
+            } else {
+                Some(req.file_comp.as_str())
+            };
             let original_name = if req.hide_filename { Some("") } else { None };
             let tmp_output_path = format!("{}.tmp", req.output_file);
             let mut progress = |stage: &str, done: u64, total: u64| {
@@ -559,63 +595,72 @@ async fn decrypt(
     set_active_control(&state, ctrl_state)?;
 
     let window_clone = window.clone();
-    let join_res = tauri::async_runtime::spawn_blocking(move || -> Result<DecryptResult, String> {
-        emit_status(&window_clone, "backend_dec_start", "Starting decryption...");
-        let kf_hash = match req.keyfile_path.as_deref() {
-            Some(p) => Some(get_keyfile_hash_rs(p).map_err(|e| e.message)?),
-            None => None,
-        };
-        if !req.extract {
+    let join_res =
+        tauri::async_runtime::spawn_blocking(move || -> Result<DecryptResult, String> {
+            emit_status(&window_clone, "backend_dec_start", "Starting decryption...");
+            let kf_hash = match req.keyfile_path.as_deref() {
+                Some(p) => Some(get_keyfile_hash_rs(p).map_err(|e| e.message)?),
+                None => None,
+            };
+            if !req.extract {
+                let mut progress = |stage: &str, done: u64, total: u64| {
+                    emit_progress(&window_clone, stage, done, total);
+                };
+                let tmp_output_path = format!("{}.tmp", req.output_path);
+                let meta = decrypt_file_ex_rs_controlled(
+                    &req.input_file,
+                    &tmp_output_path,
+                    req.password.expose_secret(),
+                    kf_hash.as_deref(),
+                    Some(&ctrl),
+                    Some(&mut progress),
+                )
+                .map_err(|e| e.message)?;
+                // Atomic rename
+                std::fs::rename(&tmp_output_path, &req.output_path)
+                    .map_err(|e| format!("Failed to rename temp file: {}", e))?;
+                emit_progress(&window_clone, "decrypt", 1, 1);
+                emit_status(&window_clone, "backend_dec_complete", "Decryption complete");
+                return Ok(DecryptResult {
+                    meta: Some(MetaInfoDto::from(meta)),
+                });
+            }
+
+            emit_status(
+                &window_clone,
+                "backend_dec_archive",
+                "Decrypting archive...",
+            );
+            let tmp_tar = NamedTempFile::new().map_err(|e| e.to_string())?;
+            let tar_path = tmp_tar.path().to_string_lossy().to_string();
             let mut progress = |stage: &str, done: u64, total: u64| {
                 emit_progress(&window_clone, stage, done, total);
             };
-            let tmp_output_path = format!("{}.tmp", req.output_path);
             let meta = decrypt_file_ex_rs_controlled(
                 &req.input_file,
-                &tmp_output_path,
+                &tar_path,
                 req.password.expose_secret(),
                 kf_hash.as_deref(),
                 Some(&ctrl),
                 Some(&mut progress),
             )
             .map_err(|e| e.message)?;
-            // Atomic rename
-            std::fs::rename(&tmp_output_path, &req.output_path)
-                .map_err(|e| format!("Failed to rename temp file: {}", e))?;
+
+            emit_status(&window_clone, "backend_dec_extract", "Extracting files...");
+            safe_extract_tar(&tar_path, &req.output_path).map_err(|e| e.to_string())?;
+
+            if req.keep_tar {
+                let target = Path::new(&req.output_path).join("decrypted.tar");
+                let _ = std::fs::copy(&tar_path, target);
+            }
+
             emit_progress(&window_clone, "decrypt", 1, 1);
-            emit_status(&window_clone, "backend_dec_complete", "Decryption complete");
-            return Ok(DecryptResult { meta: Some(MetaInfoDto::from(meta)) });
-        }
-
-        emit_status(&window_clone, "backend_dec_archive", "Decrypting archive...");
-        let tmp_tar = NamedTempFile::new().map_err(|e| e.to_string())?;
-        let tar_path = tmp_tar.path().to_string_lossy().to_string();
-        let mut progress = |stage: &str, done: u64, total: u64| {
-            emit_progress(&window_clone, stage, done, total);
-        };
-        let meta = decrypt_file_ex_rs_controlled(
-            &req.input_file,
-            &tar_path,
-            req.password.expose_secret(),
-            kf_hash.as_deref(),
-            Some(&ctrl),
-            Some(&mut progress),
-        )
-        .map_err(|e| e.message)?;
-
-        emit_status(&window_clone, "backend_dec_extract", "Extracting files...");
-        safe_extract_tar(&tar_path, &req.output_path).map_err(|e| e.to_string())?;
-
-        if req.keep_tar {
-            let target = Path::new(&req.output_path).join("decrypted.tar");
-            let _ = std::fs::copy(&tar_path, target);
-        }
-
-        emit_progress(&window_clone, "decrypt", 1, 1);
-        emit_status(&window_clone, "backend_dec_complete", "Extraction complete");
-        Ok(DecryptResult { meta: Some(MetaInfoDto::from(meta)) })
-    })
-    .await;
+            emit_status(&window_clone, "backend_dec_complete", "Extraction complete");
+            Ok(DecryptResult {
+                meta: Some(MetaInfoDto::from(meta)),
+            })
+        })
+        .await;
 
     let res: Result<DecryptResult, String> = match join_res {
         Ok(inner) => inner,
@@ -687,7 +732,9 @@ async fn verify(
         )
         .map_err(|e| e.message)?;
         emit_status(&window_clone, "backend_verify_ok", "Verification OK");
-        Ok(VerifyResult { meta: MetaInfoDto::from(meta) })
+        Ok(VerifyResult {
+            meta: MetaInfoDto::from(meta),
+        })
     })
     .await;
 
@@ -726,14 +773,22 @@ fn read_metadata(req: MetadataRequest) -> Result<MetaInfoDto, String> {
 
 /// Audit log commands
 #[tauri::command]
-fn get_audit_log(audit_state: tauri::State<'_, AuditState>) -> Result<Vec<audit::AuditEntry>, String> {
-    let logger = audit_state.logger.lock().map_err(|_| "State lock failed".to_string())?;
+fn get_audit_log(
+    audit_state: tauri::State<'_, AuditState>,
+) -> Result<Vec<audit::AuditEntry>, String> {
+    let logger = audit_state
+        .logger
+        .lock()
+        .map_err(|_| "State lock failed".to_string())?;
     Ok(logger.read_recent(500))
 }
 
 #[tauri::command]
 fn clear_audit_log(audit_state: tauri::State<'_, AuditState>) -> Result<(), String> {
-    let logger = audit_state.logger.lock().map_err(|_| "State lock failed".to_string())?;
+    let logger = audit_state
+        .logger
+        .lock()
+        .map_err(|_| "State lock failed".to_string())?;
     logger.clear()
 }
 
@@ -771,7 +826,10 @@ async fn open_file_dialog(
 }
 
 #[tauri::command]
-async fn open_folder_dialog(window: tauri::Window, default_path: Option<String>) -> Result<Option<String>, String> {
+async fn open_folder_dialog(
+    window: tauri::Window,
+    default_path: Option<String>,
+) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let mut builder = window.dialog().file();
         if let Some(path) = default_path {
@@ -787,18 +845,21 @@ async fn open_folder_dialog(window: tauri::Window, default_path: Option<String>)
 }
 
 #[tauri::command]
-async fn save_file_dialog(window: tauri::Window, default_path: Option<String>) -> Result<Option<String>, String> {
+async fn save_file_dialog(
+    window: tauri::Window,
+    default_path: Option<String>,
+) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let mut builder = window.dialog().file();
         if let Some(path) = default_path {
             let p = Path::new(&path);
             if let Some(parent) = p.parent() {
-                 builder = builder.set_directory(parent);
+                builder = builder.set_directory(parent);
             } else {
-                 builder = builder.set_directory(p);
+                builder = builder.set_directory(p);
             }
             if let Some(name) = p.file_name() {
-                 builder = builder.set_file_name(name.to_string_lossy());
+                builder = builder.set_file_name(name.to_string_lossy());
             }
         }
         let file = builder.blocking_save_file();
@@ -820,13 +881,13 @@ fn build_tray_icon_rgba() -> (Vec<u8>, u32, u32) {
         data[i..i + 4].copy_from_slice(&rgba);
     };
     let accent = [0x35u8, 0xd0u8, 0xa1u8, 0xffu8]; // #35d0a1
-    // Shackle (top arc of lock): rows 2–7, columns 4–11
+                                                   // Shackle (top arc of lock): rows 2–7, columns 4–11
     for y in 2usize..=7 {
         for x in 4usize..=11 {
-            let on_left_wall  = x == 4  && y >= 5;
+            let on_left_wall = x == 4 && y >= 5;
             let on_right_wall = x == 11 && y >= 5;
-            let on_top        = y == 2  && x >= 5 && x <= 10;
-            let on_side_top   = (x == 5 || x == 10) && y == 3;
+            let on_top = y == 2 && (5..=10).contains(&x);
+            let on_side_top = (x == 5 || x == 10) && y == 3;
             if on_left_wall || on_right_wall || on_top || on_side_top {
                 set(&mut data, x, y, accent);
             }
@@ -841,9 +902,9 @@ fn build_tray_icon_rgba() -> (Vec<u8>, u32, u32) {
     // Keyhole cutout in body
     for y in 9usize..=12 {
         for x in 6usize..=9 {
-            let top_circle = y == 9 && x >= 6 && x <= 9;
-            let stem = y >= 10 && y <= 12 && x == 7;
-            let stem2 = y >= 10 && y <= 12 && x == 8;
+            let top_circle = y == 9 && (6..=9).contains(&x);
+            let stem = (10..=12).contains(&y) && x == 7;
+            let stem2 = (10..=12).contains(&y) && x == 8;
             if !(top_circle || stem || stem2) {
                 set(&mut data, x, y, [0x00, 0x00, 0x00, 0x00]);
             }

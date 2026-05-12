@@ -1,8 +1,8 @@
 // audit.rs — JSONL audit log for Cryptera
+use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
-use serde::{Deserialize, Serialize};
 
 /// A single audit log entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,7 +65,7 @@ impl AuditLogger {
         let reader = BufReader::new(file);
         let mut entries: Vec<AuditEntry> = reader
             .lines()
-            .filter_map(|l| l.ok())
+            .map_while(|l| l.ok())
             .filter(|l| !l.trim().is_empty())
             .filter_map(|l| serde_json::from_str(&l).ok())
             .collect();

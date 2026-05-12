@@ -1,5 +1,7 @@
-
 #![allow(deprecated)]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::type_complexity)]
+#![allow(clippy::needless_range_loop)]
 
 use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Nonce};
@@ -115,8 +117,12 @@ fn crc32_bytes(data: &[u8]) -> u32 {
 fn nonce12(nonce_base: u32, block_index: u32, shard_index: u32) -> [u8; 12] {
     let mut out = [0u8; 12];
     (&mut out[0..4]).write_u32::<BigEndian>(nonce_base).unwrap();
-    (&mut out[4..8]).write_u32::<BigEndian>(block_index).unwrap();
-    (&mut out[8..12]).write_u32::<BigEndian>(shard_index).unwrap();
+    (&mut out[4..8])
+        .write_u32::<BigEndian>(block_index)
+        .unwrap();
+    (&mut out[8..12])
+        .write_u32::<BigEndian>(shard_index)
+        .unwrap();
     out
 }
 
@@ -296,7 +302,7 @@ fn write_header(
         hdr.extend_from_slice(fname_bytes);
     }
 
-    if hdr.len() == 0 || hdr.len() > MAX_HEADER_LEN {
+    if hdr.is_empty() || hdr.len() > MAX_HEADER_LEN {
         return Err(CoreError::new(
             DECRYPT_HEADER_INVALID,
             "Header length out of bounds",
@@ -319,7 +325,16 @@ fn write_header(
     trailer.write_u16::<BigEndian>(hdr_len).unwrap();
     trailer.extend_from_slice(TRAILER);
 
-    Ok((start_header, trailer, prefix, hdr_len, hdr_crc, salt, nonce_base, flags))
+    Ok((
+        start_header,
+        trailer,
+        prefix,
+        hdr_len,
+        hdr_crc,
+        salt,
+        nonce_base,
+        flags,
+    ))
 }
 #[derive(Debug, Clone)]
 struct HeaderParams {
@@ -411,18 +426,18 @@ fn progress_report(
 
 fn parse_header(hdr: &[u8]) -> Result<HeaderParams, CoreError> {
     let mut rdr = io::Cursor::new(hdr);
-    let version = rdr.read_u8().map_err(|_| {
-        CoreError::new(DECRYPT_HEADER_INVALID, "Invalid header (version)")
-    })?;
-    let _alg = rdr.read_u8().map_err(|_| {
-        CoreError::new(DECRYPT_HEADER_INVALID, "Invalid header (alg)")
-    })?;
-    let _kdf = rdr.read_u8().map_err(|_| {
-        CoreError::new(DECRYPT_HEADER_INVALID, "Invalid header (kdf)")
-    })?;
-    let _crc = rdr.read_u8().map_err(|_| {
-        CoreError::new(DECRYPT_HEADER_INVALID, "Invalid header (crc)")
-    })?;
+    let version = rdr
+        .read_u8()
+        .map_err(|_| CoreError::new(DECRYPT_HEADER_INVALID, "Invalid header (version)"))?;
+    let _alg = rdr
+        .read_u8()
+        .map_err(|_| CoreError::new(DECRYPT_HEADER_INVALID, "Invalid header (alg)"))?;
+    let _kdf = rdr
+        .read_u8()
+        .map_err(|_| CoreError::new(DECRYPT_HEADER_INVALID, "Invalid header (kdf)"))?;
+    let _crc = rdr
+        .read_u8()
+        .map_err(|_| CoreError::new(DECRYPT_HEADER_INVALID, "Invalid header (crc)"))?;
     let salt_len = rdr
         .read_u8()
         .map_err(|_| CoreError::new(DECRYPT_HEADER_INVALID, "Invalid header (salt_len)"))?;
@@ -476,11 +491,11 @@ fn parse_header(hdr: &[u8]) -> Result<HeaderParams, CoreError> {
         had_filename = true;
     }
 
-    if had_filename {
-        if (rdr.position() as usize + 2) <= hdr.len() {
-            let fname_len = rdr
-                .read_u16::<BigEndian>()
-                .map_err(|_| CoreError::new(DECRYPT_HEADER_INVALID, "Invalid header (fname_len)"))?;
+    if had_filename && (rdr.position() as usize + 2) <= hdr.len() {
+        {
+            let fname_len = rdr.read_u16::<BigEndian>().map_err(|_| {
+                CoreError::new(DECRYPT_HEADER_INVALID, "Invalid header (fname_len)")
+            })?;
             let pos = rdr.position() as usize;
             if pos + fname_len as usize <= hdr.len() {
                 let mut fname = vec![0u8; fname_len as usize];
@@ -662,7 +677,7 @@ fn gf_tables() -> &'static GfTables {
     })
 }
 
-fn gf_mat_inv(a: &Vec<Vec<u8>>) -> Result<Vec<Vec<u8>>, CoreError> {
+fn gf_mat_inv(a: &[Vec<u8>]) -> Result<Vec<Vec<u8>>, CoreError> {
     let tbl = gf_tables();
     let k = a.len();
     let mut aug = vec![vec![0u8; k * 2]; k];
@@ -680,7 +695,8 @@ fn gf_mat_inv(a: &Vec<Vec<u8>>) -> Result<Vec<Vec<u8>>, CoreError> {
                 break;
             }
         }
-        let pivot = pivot.ok_or_else(|| CoreError::new(DECRYPT_CORRUPT_BEYOND_FEC, "Matrix not invertible"))?;
+        let pivot = pivot
+            .ok_or_else(|| CoreError::new(DECRYPT_CORRUPT_BEYOND_FEC, "Matrix not invertible"))?;
         if pivot != col {
             aug.swap(pivot, col);
         }
@@ -712,14 +728,17 @@ fn gf_mat_inv(a: &Vec<Vec<u8>>) -> Result<Vec<Vec<u8>>, CoreError> {
     Ok(inv)
 }
 
-fn gf_mat_mul(a: &Vec<Vec<u8>>, b: &Vec<Vec<u8>>) -> Result<Vec<Vec<u8>>, CoreError> {
+fn gf_mat_mul(a: &[Vec<u8>], b: &[Vec<u8>]) -> Result<Vec<Vec<u8>>, CoreError> {
     let tbl = gf_tables();
     let r = a.len();
     let n = a[0].len();
     let n2 = b.len();
     let c = b[0].len();
     if n != n2 {
-        return Err(CoreError::new(DECRYPT_CORRUPT_BEYOND_FEC, "Dimension mismatch"));
+        return Err(CoreError::new(
+            DECRYPT_CORRUPT_BEYOND_FEC,
+            "Dimension mismatch",
+        ));
     }
     let mut out = vec![vec![0u8; c]; r];
     for i in 0..r {
@@ -757,7 +776,7 @@ fn build_generator_matrix(k: u16, r: u16) -> Result<Vec<Vec<u8>>, CoreError> {
             v[i][j] = tbl.mul[xs as usize][prev as usize];
         }
     }
-    let t = gf_mat_inv(&v[..k].to_vec())?;
+    let t = gf_mat_inv(&v[..k])?;
     let g = gf_mat_mul(&v, &t)?;
     for i in 0..k {
         for j in 0..k {
@@ -772,14 +791,19 @@ fn build_generator_matrix(k: u16, r: u16) -> Result<Vec<Vec<u8>>, CoreError> {
     Ok(g)
 }
 
-fn fec_encode(data: &Vec<Vec<u8>>, g: &Vec<Vec<u8>>, k: usize, r: usize) -> Result<Vec<Vec<u8>>, CoreError> {
+fn fec_encode(
+    data: &[Vec<u8>],
+    g: &[Vec<u8>],
+    k: usize,
+    r: usize,
+) -> Result<Vec<Vec<u8>>, CoreError> {
     let m = k + r;
     let mut out = vec![vec![0u8; data[0].len()]; m];
     for i in 0..k {
         out[i].copy_from_slice(&data[i]);
     }
-    let g_parity = g[k..].to_vec();
-    let parity = gf_mat_mul(&g_parity, data)?;
+    let g_parity = &g[k..];
+    let parity = gf_mat_mul(g_parity, data)?;
     for i in 0..r {
         out[k + i].copy_from_slice(&parity[i]);
     }
@@ -787,9 +811,9 @@ fn fec_encode(data: &Vec<Vec<u8>>, g: &Vec<Vec<u8>>, k: usize, r: usize) -> Resu
 }
 
 fn fec_decode(
-    shards: &Vec<Option<Vec<u8>>>,
-    present: &Vec<bool>,
-    g: &Vec<Vec<u8>>,
+    shards: &[Option<Vec<u8>>],
+    present: &[bool],
+    g: &[Vec<u8>],
     k: usize,
     r: usize,
 ) -> Result<Vec<Vec<u8>>, CoreError> {
@@ -956,7 +980,10 @@ pub fn parse_header_blob_rs(blob: &[u8]) -> Result<MetaInfo, CoreError> {
     }
     let min = 4 + 2 + hdr_len as usize + 4;
     if blob.len() < min {
-        return Err(CoreError::new(DECRYPT_HEADER_INVALID, "Truncated header blob."));
+        return Err(CoreError::new(
+            DECRYPT_HEADER_INVALID,
+            "Truncated header blob.",
+        ));
     }
     let hdr_start = 6;
     let hdr_end = hdr_start + hdr_len as usize;
@@ -1015,7 +1042,10 @@ pub fn encrypt_file_rs_controlled(
         } else if alg == "lzma" {
             comp_flag = HDR_FLAG_COMPRESS_LZMA;
         } else {
-            return Err(CoreError::new(DECRYPT_UNKNOWN_ERROR, "Unsupported compression"));
+            return Err(CoreError::new(
+                DECRYPT_UNKNOWN_ERROR,
+                "Unsupported compression",
+            ));
         }
     }
     flags |= comp_flag;
@@ -1107,10 +1137,18 @@ pub fn encrypt_file_rs_controlled(
     let num_blocks = if stored_size == 0 {
         1
     } else {
-        (stored_size + block_size - 1) / block_size
+        stored_size.div_ceil(block_size)
     };
 
-    validate_limits(k, r, shard_size, argon2_t, argon2_m, argon2_p, Some(num_blocks))?;
+    validate_limits(
+        k,
+        r,
+        shard_size,
+        argon2_t,
+        argon2_m,
+        argon2_p,
+        Some(num_blocks),
+    )?;
 
     let (start_header, base_trailer, prefix, _hdr_len, hdr_crc, salt, nonce_base, flags) =
         write_header(
@@ -1151,7 +1189,8 @@ pub fn encrypt_file_rs_controlled(
     let tmp_path = tmp_out.path().to_path_buf();
 
     let mut f_in = BufReader::new(
-        File::open(&processing_path).map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?,
+        File::open(&processing_path)
+            .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?,
     );
     let mut f_out = BufWriter::new(
         tmp_out
@@ -1351,19 +1390,15 @@ pub fn verify_file_integrity_rs_controlled(
     control: Option<&ControlFlags>,
     progress: Option<&mut dyn FnMut(&str, u64, u64)>,
 ) -> Result<MetaInfo, CoreError> {
-    let params = verify_internal_rs_controlled(
-        input_file,
-        password,
-        keyfile_hash,
-        control,
-        progress,
-    )?;
+    let params =
+        verify_internal_rs_controlled(input_file, password, keyfile_hash, control, progress)?;
     Ok(meta_from_params(&params))
 }
 
 #[pyfunction]
 fn get_keyfile_hash(path: &str) -> PyResult<Py<PyBytes>> {
-    let bytes = keyfile_hash(Path::new(path)).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+    let bytes =
+        keyfile_hash(Path::new(path)).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
     Python::with_gil(|py| Ok(PyBytes::new(py, &bytes).into()))
 }
 #[pyfunction]
@@ -1416,7 +1451,13 @@ fn encrypt_file(
     let filename_meta: Option<String> = match original_filename {
         None => {
             flags |= HDR_FLAG_HAS_FILENAME;
-            Some(Path::new(input_file).file_name().unwrap_or_default().to_string_lossy().to_string())
+            Some(
+                Path::new(input_file)
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string(),
+            )
         }
         Some("") => None,
         Some(name) => {
@@ -1436,9 +1477,15 @@ fn encrypt_file(
         let out_dir = Path::new(output_file)
             .parent()
             .unwrap_or_else(|| Path::new("."));
-        let tmp = NamedTempFile::new_in(out_dir).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        let mut f_in = BufReader::new(File::open(input_file).map_err(|e| PyRuntimeError::new_err(e.to_string()))?);
-        let f_out = BufWriter::new(tmp.reopen().map_err(|e| PyRuntimeError::new_err(e.to_string()))?);
+        let tmp =
+            NamedTempFile::new_in(out_dir).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        let mut f_in = BufReader::new(
+            File::open(input_file).map_err(|e| PyRuntimeError::new_err(e.to_string()))?,
+        );
+        let f_out = BufWriter::new(
+            tmp.reopen()
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?,
+        );
 
         progress_call(py, &progress_cb, "compress", 0, 100)
             .map_err(|e| PyRuntimeError::new_err(e.message))?;
@@ -1446,7 +1493,9 @@ fn encrypt_file(
             let mut enc = ZlibEncoder::new(f_out, Compression::new(6));
             let mut buf = [0u8; 64 * 1024];
             loop {
-                let n = f_in.read(&mut buf).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+                let n = f_in
+                    .read(&mut buf)
+                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
                 if n == 0 {
                     break;
                 }
@@ -1455,12 +1504,15 @@ fn encrypt_file(
                 enc.write_all(&buf[..n])
                     .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
             }
-            enc.finish().map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+            enc.finish()
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         } else if alg == "lzma" {
             let mut enc = xz2::write::XzEncoder::new(f_out, 6);
             let mut buf = [0u8; 64 * 1024];
             loop {
-                let n = f_in.read(&mut buf).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+                let n = f_in
+                    .read(&mut buf)
+                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
                 if n == 0 {
                     break;
                 }
@@ -1469,7 +1521,8 @@ fn encrypt_file(
                 enc.write_all(&buf[..n])
                     .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
             }
-            enc.finish().map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+            enc.finish()
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         }
         processing_path = tmp.path().to_path_buf();
         temp_compressed = Some(tmp);
@@ -1480,10 +1533,22 @@ fn encrypt_file(
         .len();
 
     let block_size = k as u64 * shard_size as u64;
-    let num_blocks = if stored_size == 0 { 1 } else { (stored_size + block_size - 1) / block_size };
+    let num_blocks = if stored_size == 0 {
+        1
+    } else {
+        stored_size.div_ceil(block_size)
+    };
 
-    validate_limits(k, r, shard_size, argon2_t, argon2_m, argon2_p, Some(num_blocks))
-        .map_err(|e| PyRuntimeError::new_err(e.message))?;
+    validate_limits(
+        k,
+        r,
+        shard_size,
+        argon2_t,
+        argon2_m,
+        argon2_p,
+        Some(num_blocks),
+    )
+    .map_err(|e| PyRuntimeError::new_err(e.message))?;
 
     let (start_header, base_trailer, prefix, _hdr_len, hdr_crc, salt, nonce_base, flags) =
         write_header(
@@ -1502,10 +1567,8 @@ fn encrypt_file(
 
     let kf_hash = if let Some(h) = keyfile_hash {
         Some(h.as_bytes())
-    } else if let Some(kf) = keyfile {
-        Some(kf.as_bytes())
     } else {
-        None
+        keyfile.map(|kf| kf.as_bytes())
     };
     let key = Zeroizing::new(
         derive_key(password, &salt, argon2_t, argon2_m, argon2_p, kf_hash)
@@ -1524,11 +1587,18 @@ fn encrypt_file(
     let out_dir = Path::new(output_file)
         .parent()
         .unwrap_or_else(|| Path::new("."));
-    let tmp_out = NamedTempFile::new_in(out_dir).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+    let tmp_out =
+        NamedTempFile::new_in(out_dir).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
     let tmp_path = tmp_out.path().to_path_buf();
 
-    let mut f_in = BufReader::new(File::open(&processing_path).map_err(|e| PyRuntimeError::new_err(e.to_string()))?);
-    let mut f_out = BufWriter::new(tmp_out.reopen().map_err(|e| PyRuntimeError::new_err(e.to_string()))?);
+    let mut f_in = BufReader::new(
+        File::open(&processing_path).map_err(|e| PyRuntimeError::new_err(e.to_string()))?,
+    );
+    let mut f_out = BufWriter::new(
+        tmp_out
+            .reopen()
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?,
+    );
 
     f_out
         .write_all(&start_header)
@@ -1536,7 +1606,8 @@ fn encrypt_file(
 
     if flags & HDR_FLAG_PWCHK != 0 {
         let nonce = nonce12(nonce_base, 0xFFFFFFFF, 0xFFFFFFFF);
-        let cipher = Aes256Gcm::new_from_slice(key.as_ref()).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        let cipher = Aes256Gcm::new_from_slice(key.as_ref())
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         let ct = cipher
             .encrypt(
                 Nonce::from_slice(&nonce),
@@ -1547,15 +1618,22 @@ fn encrypt_file(
             )
             .map_err(|_| PyRuntimeError::new_err("Password check encrypt failed"))?;
         let (ct_body, tag) = ct.split_at(PWCHK_PLAINTEXT_LEN);
-        f_out.write_all(PWCHK_MAGIC).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        f_out
+            .write_all(PWCHK_MAGIC)
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         write_crc_copies(&mut f_out, &[ct_body, tag].concat())
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        f_out.write_all(ct_body).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        f_out.write_all(tag).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        f_out
+            .write_all(ct_body)
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        f_out
+            .write_all(tag)
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
     }
 
     let g = build_generator_matrix(k, r).map_err(|e| PyRuntimeError::new_err(e.message))?;
-    let cipher = Aes256Gcm::new_from_slice(key.as_ref()).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+    let cipher = Aes256Gcm::new_from_slice(key.as_ref())
+        .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
     progress_call(py, &progress_cb, "encrypt", 0, num_blocks)
         .map_err(|e| PyRuntimeError::new_err(e.message))?;
 
@@ -1570,7 +1648,9 @@ fn encrypt_file(
 
         let mut read_total = 0usize;
         while read_total < block_size_usize {
-            let n = f_in.read(&mut block_buf[read_total..]).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+            let n = f_in
+                .read(&mut block_buf[read_total..])
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
             if n == 0 {
                 break;
             }
@@ -1594,7 +1674,12 @@ fn encrypt_file(
         for shard_index in 0..m {
             let shard_plain = &coded[shard_index];
             let nonce = nonce12(nonce_base, block_index as u32, shard_index as u32);
-            let aad = [prefix.as_slice(), &(block_index as u32).to_be_bytes(), &(shard_index as u32).to_be_bytes()].concat();
+            let aad = [
+                prefix.as_slice(),
+                &(block_index as u32).to_be_bytes(),
+                &(shard_index as u32).to_be_bytes(),
+            ]
+            .concat();
             let ct = cipher
                 .encrypt(
                     Nonce::from_slice(&nonce),
@@ -1607,25 +1692,43 @@ fn encrypt_file(
             let (ct_body, tag) = ct.split_at(shard_size_usize);
             write_crc_copies(&mut f_out, &[ct_body, tag].concat())
                 .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-            f_out.write_all(ct_body).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-            f_out.write_all(tag).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+            f_out
+                .write_all(ct_body)
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+            f_out
+                .write_all(tag)
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         }
 
         progress_call(py, &progress_cb, "encrypt", block_index + 1, num_blocks)
             .map_err(|e| PyRuntimeError::new_err(e.message))?;
     }
 
-    f_out.write_all(&trailer).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-    f_out.flush().map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+    f_out
+        .write_all(&trailer)
+        .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+    f_out
+        .flush()
+        .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
 
-    atomic_replace(&tmp_path, Path::new(output_file)).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+    atomic_replace(&tmp_path, Path::new(output_file))
+        .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
     drop(temp_compressed);
     Ok(())
 }
 
 fn open_header(
     path: &str,
-) -> Result<(HeaderParams, Vec<u8>, u16, u32, Option<[u8; HEADER_AUTH_TAG_LEN]>), CoreError> {
+) -> Result<
+    (
+        HeaderParams,
+        Vec<u8>,
+        u16,
+        u32,
+        Option<[u8; HEADER_AUTH_TAG_LEN]>,
+    ),
+    CoreError,
+> {
     let f = File::open(path).map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
     let mut header = read_header_from_start(&f)
         .map_err(|e| CoreError::new(DECRYPT_HEADER_INVALID, e.to_string()))?;
@@ -1633,7 +1736,8 @@ fn open_header(
         header = read_header_from_end(&f)
             .map_err(|e| CoreError::new(DECRYPT_HEADER_INVALID, e.to_string()))?;
     }
-    let header = header.ok_or_else(|| CoreError::new(DECRYPT_HEADER_INVALID, "Header not found."))?;
+    let header =
+        header.ok_or_else(|| CoreError::new(DECRYPT_HEADER_INVALID, "Header not found."))?;
     let hdr = header.hdr;
     let hdr_len = header.hdr_len;
     let hdr_crc = header.hdr_crc;
@@ -1655,7 +1759,10 @@ fn decrypt_internal(
     if params.version > VERSION_U8 {
         return Err(CoreError::new(
             DECRYPT_HEADER_INVALID,
-            format!("Unsupported version {} (max {})", params.version, VERSION_U8),
+            format!(
+                "Unsupported version {} (max {})",
+                params.version, VERSION_U8
+            ),
         ));
     }
     if params.version < 1 {
@@ -1668,7 +1775,7 @@ fn decrypt_internal(
     let num_blocks = if params.stored_size == 0 {
         1
     } else {
-        (params.stored_size + block_size - 1) / block_size
+        params.stored_size.div_ceil(block_size)
     };
     validate_limits(
         params.k,
@@ -1700,13 +1807,16 @@ fn decrypt_internal(
     let cipher = Aes256Gcm::new_from_slice(key.as_ref())
         .map_err(|e| CoreError::new(DECRYPT_UNKNOWN_ERROR, e.to_string()))?;
 
-    let mut f_in = BufReader::new(File::open(input_file).map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?);
+    let mut f_in = BufReader::new(
+        File::open(input_file).map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?,
+    );
     if pwchk_present {
         f_in.seek(io::SeekFrom::Start(data_offset))
             .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
         let mut blob = vec![0u8; PWCHK_RECORD_SIZE];
-        f_in.read_exact(&mut blob)
-            .map_err(|_| CoreError::new(DECRYPT_TRUNCATED, "File truncated at password check record"))?;
+        f_in.read_exact(&mut blob).map_err(|_| {
+            CoreError::new(DECRYPT_TRUNCATED, "File truncated at password check record")
+        })?;
         let off = 4 + (4 * CRC_COPIES);
         let ct = &blob[off..off + PWCHK_PLAINTEXT_LEN];
         let tag = &blob[off + PWCHK_PLAINTEXT_LEN..off + PWCHK_PLAINTEXT_LEN + TAG_LEN];
@@ -1716,7 +1826,13 @@ fn decrypt_internal(
         data.extend_from_slice(ct);
         data.extend_from_slice(tag);
         if cipher
-            .decrypt(Nonce::from_slice(&nonce), Payload { msg: &data, aad: &aad })
+            .decrypt(
+                Nonce::from_slice(&nonce),
+                Payload {
+                    msg: &data,
+                    aad: &aad,
+                },
+            )
             .is_err()
         {
             return Err(CoreError::new(
@@ -1731,14 +1847,25 @@ fn decrypt_internal(
     let out_dir = Path::new(output_file)
         .parent()
         .unwrap_or_else(|| Path::new("."));
-    let tmp_out = NamedTempFile::new_in(out_dir).map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
+    let tmp_out = NamedTempFile::new_in(out_dir)
+        .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
     let tmp_path = tmp_out.path().to_path_buf();
-    let f_out = BufWriter::new(tmp_out.reopen().map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?);
+    let f_out = BufWriter::new(
+        tmp_out
+            .reopen()
+            .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?,
+    );
 
     let mut writer: Box<dyn Write> = if params.flags & HDR_FLAG_COMPRESS_ZLIB != 0 {
-        Box::new(ZlibDecoder::new(LimitedWriter::new(f_out, Some(params.plain_size))))
+        Box::new(ZlibDecoder::new(LimitedWriter::new(
+            f_out,
+            Some(params.plain_size),
+        )))
     } else if params.flags & HDR_FLAG_COMPRESS_LZMA != 0 {
-        Box::new(XzDecoder::new(LimitedWriter::new(f_out, Some(params.plain_size))))
+        Box::new(XzDecoder::new(LimitedWriter::new(
+            f_out,
+            Some(params.plain_size),
+        )))
     } else {
         Box::new(LimitedWriter::new(f_out, Some(params.plain_size)))
     };
@@ -1759,16 +1886,28 @@ fn decrypt_internal(
 
         for shard_index in 0..m {
             let mut crc_fields = [0u8; CRC_BLOCK_SIZE];
-            f_in.read_exact(&mut crc_fields)
-                .map_err(|_| CoreError::new(DECRYPT_TRUNCATED, format!("Unexpected EOF reading shard {shard_index} CRC in block {block_index}")))?;
+            f_in.read_exact(&mut crc_fields).map_err(|_| {
+                CoreError::new(
+                    DECRYPT_TRUNCATED,
+                    format!(
+                        "Unexpected EOF reading shard {shard_index} CRC in block {block_index}"
+                    ),
+                )
+            })?;
             let mut crcs = Vec::new();
             let mut cur = io::Cursor::new(&crc_fields);
             for _ in 0..CRC_COPIES {
                 crcs.push(cur.read_u32::<BigEndian>().unwrap());
             }
             let mut ct = vec![0u8; shard_size];
-            f_in.read_exact(&mut ct)
-                .map_err(|_| CoreError::new(DECRYPT_TRUNCATED, format!("File truncated at shard data (block {block_index}, shard {shard_index})")))?;
+            f_in.read_exact(&mut ct).map_err(|_| {
+                CoreError::new(
+                    DECRYPT_TRUNCATED,
+                    format!(
+                        "File truncated at shard data (block {block_index}, shard {shard_index})"
+                    ),
+                )
+            })?;
             let mut tag = vec![0u8; params.tag_len as usize];
             f_in.read_exact(&mut tag)
                 .map_err(|_| CoreError::new(DECRYPT_TRUNCATED, format!("File truncated at authentication tag (block {block_index}, shard {shard_index})")))?;
@@ -1777,11 +1916,22 @@ fn decrypt_internal(
                 continue;
             }
             let nonce = nonce12(params.nonce_base, block_index as u32, shard_index as u32);
-            let aad = [prefix.as_slice(), &(block_index as u32).to_be_bytes(), &(shard_index as u32).to_be_bytes()].concat();
+            let aad = [
+                prefix.as_slice(),
+                &(block_index as u32).to_be_bytes(),
+                &(shard_index as u32).to_be_bytes(),
+            ]
+            .concat();
             let mut data = Vec::with_capacity(shard_size + tag.len());
             data.extend_from_slice(&ct);
             data.extend_from_slice(&tag);
-            if let Ok(pt) = cipher.decrypt(Nonce::from_slice(&nonce), Payload { msg: &data, aad: &aad }) {
+            if let Ok(pt) = cipher.decrypt(
+                Nonce::from_slice(&nonce),
+                Payload {
+                    msg: &data,
+                    aad: &aad,
+                },
+            ) {
                 shards[shard_index] = Some(pt);
                 present[shard_index] = true;
             }
@@ -1822,7 +1972,9 @@ fn decrypt_internal(
         progress_call(py, &progress_cb, "decrypt", block_index + 1, num_blocks)?;
     }
 
-    writer.flush().map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
+    writer
+        .flush()
+        .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
 
     atomic_replace(&tmp_path, Path::new(output_file))
         .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
@@ -1841,7 +1993,10 @@ fn decrypt_internal_rs_controlled(
     if params.version > VERSION_U8 {
         return Err(CoreError::new(
             DECRYPT_HEADER_INVALID,
-            format!("Unsupported version {} (max {})", params.version, VERSION_U8),
+            format!(
+                "Unsupported version {} (max {})",
+                params.version, VERSION_U8
+            ),
         ));
     }
     if params.version < 1 {
@@ -1854,7 +2009,7 @@ fn decrypt_internal_rs_controlled(
     let num_blocks = if params.stored_size == 0 {
         1
     } else {
-        (params.stored_size + block_size - 1) / block_size
+        params.stored_size.div_ceil(block_size)
     };
     validate_limits(
         params.k,
@@ -1886,15 +2041,17 @@ fn decrypt_internal_rs_controlled(
     let cipher = Aes256Gcm::new_from_slice(key.as_ref())
         .map_err(|e| CoreError::new(DECRYPT_UNKNOWN_ERROR, e.to_string()))?;
 
-    let mut f_in =
-        BufReader::new(File::open(input_file).map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?);
+    let mut f_in = BufReader::new(
+        File::open(input_file).map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?,
+    );
     if pwchk_present {
         control_wait(control)?;
         f_in.seek(io::SeekFrom::Start(data_offset))
             .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
         let mut blob = vec![0u8; PWCHK_RECORD_SIZE];
-        f_in.read_exact(&mut blob)
-            .map_err(|_| CoreError::new(DECRYPT_TRUNCATED, "File truncated at password check record"))?;
+        f_in.read_exact(&mut blob).map_err(|_| {
+            CoreError::new(DECRYPT_TRUNCATED, "File truncated at password check record")
+        })?;
         let off = 4 + (4 * CRC_COPIES);
         let ct = &blob[off..off + PWCHK_PLAINTEXT_LEN];
         let tag = &blob[off + PWCHK_PLAINTEXT_LEN..off + PWCHK_PLAINTEXT_LEN + TAG_LEN];
@@ -1904,7 +2061,13 @@ fn decrypt_internal_rs_controlled(
         data.extend_from_slice(ct);
         data.extend_from_slice(tag);
         if cipher
-            .decrypt(Nonce::from_slice(&nonce), Payload { msg: &data, aad: &aad })
+            .decrypt(
+                Nonce::from_slice(&nonce),
+                Payload {
+                    msg: &data,
+                    aad: &aad,
+                },
+            )
             .is_err()
         {
             return Err(CoreError::new(
@@ -1919,16 +2082,25 @@ fn decrypt_internal_rs_controlled(
     let out_dir = Path::new(output_file)
         .parent()
         .unwrap_or_else(|| Path::new("."));
-    let tmp_out =
-        NamedTempFile::new_in(out_dir).map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
+    let tmp_out = NamedTempFile::new_in(out_dir)
+        .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
     let tmp_path = tmp_out.path().to_path_buf();
-    let f_out =
-        BufWriter::new(tmp_out.reopen().map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?);
+    let f_out = BufWriter::new(
+        tmp_out
+            .reopen()
+            .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?,
+    );
 
     let mut writer: Box<dyn Write> = if params.flags & HDR_FLAG_COMPRESS_ZLIB != 0 {
-        Box::new(ZlibDecoder::new(LimitedWriter::new(f_out, Some(params.plain_size))))
+        Box::new(ZlibDecoder::new(LimitedWriter::new(
+            f_out,
+            Some(params.plain_size),
+        )))
     } else if params.flags & HDR_FLAG_COMPRESS_LZMA != 0 {
-        Box::new(XzDecoder::new(LimitedWriter::new(f_out, Some(params.plain_size))))
+        Box::new(XzDecoder::new(LimitedWriter::new(
+            f_out,
+            Some(params.plain_size),
+        )))
     } else {
         Box::new(LimitedWriter::new(f_out, Some(params.plain_size)))
     };
@@ -1947,16 +2119,28 @@ fn decrypt_internal_rs_controlled(
 
         for shard_index in 0..m {
             let mut crc_fields = [0u8; CRC_BLOCK_SIZE];
-            f_in.read_exact(&mut crc_fields)
-                .map_err(|_| CoreError::new(DECRYPT_TRUNCATED, format!("Unexpected EOF reading shard {shard_index} CRC in block {block_index}")))?;
+            f_in.read_exact(&mut crc_fields).map_err(|_| {
+                CoreError::new(
+                    DECRYPT_TRUNCATED,
+                    format!(
+                        "Unexpected EOF reading shard {shard_index} CRC in block {block_index}"
+                    ),
+                )
+            })?;
             let mut crcs = Vec::new();
             let mut cur = io::Cursor::new(&crc_fields);
             for _ in 0..CRC_COPIES {
                 crcs.push(cur.read_u32::<BigEndian>().unwrap());
             }
             let mut ct = vec![0u8; shard_size];
-            f_in.read_exact(&mut ct)
-                .map_err(|_| CoreError::new(DECRYPT_TRUNCATED, format!("File truncated at shard data (block {block_index}, shard {shard_index})")))?;
+            f_in.read_exact(&mut ct).map_err(|_| {
+                CoreError::new(
+                    DECRYPT_TRUNCATED,
+                    format!(
+                        "File truncated at shard data (block {block_index}, shard {shard_index})"
+                    ),
+                )
+            })?;
             let mut tag = vec![0u8; params.tag_len as usize];
             f_in.read_exact(&mut tag)
                 .map_err(|_| CoreError::new(DECRYPT_TRUNCATED, format!("File truncated at authentication tag (block {block_index}, shard {shard_index})")))?;
@@ -1965,11 +2149,22 @@ fn decrypt_internal_rs_controlled(
                 continue;
             }
             let nonce = nonce12(params.nonce_base, block_index as u32, shard_index as u32);
-            let aad = [prefix.as_slice(), &(block_index as u32).to_be_bytes(), &(shard_index as u32).to_be_bytes()].concat();
+            let aad = [
+                prefix.as_slice(),
+                &(block_index as u32).to_be_bytes(),
+                &(shard_index as u32).to_be_bytes(),
+            ]
+            .concat();
             let mut data = Vec::with_capacity(shard_size + tag.len());
             data.extend_from_slice(&ct);
             data.extend_from_slice(&tag);
-            if let Ok(pt) = cipher.decrypt(Nonce::from_slice(&nonce), Payload { msg: &data, aad: &aad }) {
+            if let Ok(pt) = cipher.decrypt(
+                Nonce::from_slice(&nonce),
+                Payload {
+                    msg: &data,
+                    aad: &aad,
+                },
+            ) {
                 shards[shard_index] = Some(pt);
                 present[shard_index] = true;
             }
@@ -2037,7 +2232,7 @@ fn verify_internal_rs_controlled(
     let num_blocks = if params.stored_size == 0 {
         1
     } else {
-        (params.stored_size + block_size - 1) / block_size
+        params.stored_size.div_ceil(block_size)
     };
     validate_limits(
         params.k,
@@ -2069,15 +2264,17 @@ fn verify_internal_rs_controlled(
     let cipher = Aes256Gcm::new_from_slice(key.as_ref())
         .map_err(|e| CoreError::new(DECRYPT_UNKNOWN_ERROR, e.to_string()))?;
 
-    let mut f_in =
-        BufReader::new(File::open(input_file).map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?);
+    let mut f_in = BufReader::new(
+        File::open(input_file).map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?,
+    );
     if pwchk_present {
         control_wait(control)?;
         f_in.seek(io::SeekFrom::Start(data_offset))
             .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
         let mut blob = vec![0u8; PWCHK_RECORD_SIZE];
-        f_in.read_exact(&mut blob)
-            .map_err(|_| CoreError::new(DECRYPT_TRUNCATED, "File truncated at password check record"))?;
+        f_in.read_exact(&mut blob).map_err(|_| {
+            CoreError::new(DECRYPT_TRUNCATED, "File truncated at password check record")
+        })?;
         let off = 4 + (4 * CRC_COPIES);
         let ct = &blob[off..off + PWCHK_PLAINTEXT_LEN];
         let tag = &blob[off + PWCHK_PLAINTEXT_LEN..off + PWCHK_PLAINTEXT_LEN + TAG_LEN];
@@ -2087,7 +2284,13 @@ fn verify_internal_rs_controlled(
         data.extend_from_slice(ct);
         data.extend_from_slice(tag);
         if cipher
-            .decrypt(Nonce::from_slice(&nonce), Payload { msg: &data, aad: &aad })
+            .decrypt(
+                Nonce::from_slice(&nonce),
+                Payload {
+                    msg: &data,
+                    aad: &aad,
+                },
+            )
             .is_err()
         {
             return Err(CoreError::new(
@@ -2099,8 +2302,9 @@ fn verify_internal_rs_controlled(
     }
 
     let g = build_generator_matrix(params.k, params.r)?;
-    let mut f_in =
-        BufReader::new(File::open(input_file).map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?);
+    let mut f_in = BufReader::new(
+        File::open(input_file).map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?,
+    );
     f_in.seek(io::SeekFrom::Start(data_offset))
         .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
 
@@ -2115,16 +2319,28 @@ fn verify_internal_rs_controlled(
 
         for shard_index in 0..m {
             let mut crc_fields = [0u8; CRC_BLOCK_SIZE];
-            f_in.read_exact(&mut crc_fields)
-                .map_err(|_| CoreError::new(DECRYPT_TRUNCATED, format!("Unexpected EOF reading shard {shard_index} CRC in block {block_index}")))?;
+            f_in.read_exact(&mut crc_fields).map_err(|_| {
+                CoreError::new(
+                    DECRYPT_TRUNCATED,
+                    format!(
+                        "Unexpected EOF reading shard {shard_index} CRC in block {block_index}"
+                    ),
+                )
+            })?;
             let mut crcs = Vec::new();
             let mut cur = io::Cursor::new(&crc_fields);
             for _ in 0..CRC_COPIES {
                 crcs.push(cur.read_u32::<BigEndian>().unwrap());
             }
             let mut ct = vec![0u8; shard_size];
-            f_in.read_exact(&mut ct)
-                .map_err(|_| CoreError::new(DECRYPT_TRUNCATED, format!("File truncated at shard data (block {block_index}, shard {shard_index})")))?;
+            f_in.read_exact(&mut ct).map_err(|_| {
+                CoreError::new(
+                    DECRYPT_TRUNCATED,
+                    format!(
+                        "File truncated at shard data (block {block_index}, shard {shard_index})"
+                    ),
+                )
+            })?;
             let mut tag = vec![0u8; params.tag_len as usize];
             f_in.read_exact(&mut tag)
                 .map_err(|_| CoreError::new(DECRYPT_TRUNCATED, format!("File truncated at authentication tag (block {block_index}, shard {shard_index})")))?;
@@ -2133,11 +2349,22 @@ fn verify_internal_rs_controlled(
                 continue;
             }
             let nonce = nonce12(params.nonce_base, block_index as u32, shard_index as u32);
-            let aad = [prefix.as_slice(), &(block_index as u32).to_be_bytes(), &(shard_index as u32).to_be_bytes()].concat();
+            let aad = [
+                prefix.as_slice(),
+                &(block_index as u32).to_be_bytes(),
+                &(shard_index as u32).to_be_bytes(),
+            ]
+            .concat();
             let mut data = Vec::with_capacity(shard_size + tag.len());
             data.extend_from_slice(&ct);
             data.extend_from_slice(&tag);
-            if let Ok(pt) = cipher.decrypt(Nonce::from_slice(&nonce), Payload { msg: &data, aad: &aad }) {
+            if let Ok(pt) = cipher.decrypt(
+                Nonce::from_slice(&nonce),
+                Payload {
+                    msg: &data,
+                    aad: &aad,
+                },
+            ) {
                 shards[shard_index] = Some(pt);
                 present[shard_index] = true;
             }
@@ -2179,7 +2406,7 @@ impl<W: Write> Write for LimitedWriter<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         if let Some(limit) = self.limit {
             if self.written + buf.len() as u64 > limit {
-                return Err(io::Error::new(io::ErrorKind::Other, "Output size limit exceeded"));
+                return Err(io::Error::other("Output size limit exceeded"));
             }
         }
         let n = self.inner.write(buf)?;
@@ -2205,10 +2432,8 @@ fn decrypt_file_ex(
 ) -> PyResult<PyObject> {
     let kf_hash = if let Some(h) = keyfile_hash {
         Some(h.as_bytes())
-    } else if let Some(kf) = keyfile {
-        Some(kf.as_bytes())
     } else {
-        None
+        keyfile.map(|kf| kf.as_bytes())
     };
     let result = decrypt_internal(
         py,
@@ -2222,22 +2447,27 @@ fn decrypt_file_ex(
     );
     let (ok, code, msg, meta) = match result {
         Ok(params) => (true, DECRYPT_OK, "OK".to_string(), params),
-        Err(e) => (false, e.code, e.message, HeaderParams {
-            version: 0,
-            salt: vec![],
-            nonce_base: 0,
-            plain_size: 0,
-            stored_size: 0,
-            shard_size: 0,
-            k: 0,
-            r: 0,
-            argon2_time: 0,
-            argon2_mem_kib: 0,
-            argon2_par: 0,
-            tag_len: TAG_LEN as u8,
-            flags: 0,
-            filename: String::new(),
-        }),
+        Err(e) => (
+            false,
+            e.code,
+            e.message,
+            HeaderParams {
+                version: 0,
+                salt: vec![],
+                nonce_base: 0,
+                plain_size: 0,
+                stored_size: 0,
+                shard_size: 0,
+                k: 0,
+                r: 0,
+                argon2_time: 0,
+                argon2_mem_kib: 0,
+                argon2_par: 0,
+                tag_len: TAG_LEN as u8,
+                flags: 0,
+                filename: String::new(),
+            },
+        ),
     };
 
     let dict = PyDict::new(py);
@@ -2246,7 +2476,15 @@ fn decrypt_file_ex(
     dict.set_item("r", meta.r)?;
     dict.set_item("version", meta.version)?;
     dict.set_item("flags", meta.flags)?;
-    let tup = PyTuple::new(py, &[ok.into_py(py), code.into_py(py), msg.into_py(py), dict.into_py(py)])?;
+    let tup = PyTuple::new(
+        py,
+        &[
+            ok.into_py(py),
+            code.into_py(py),
+            msg.into_py(py),
+            dict.into_py(py),
+        ],
+    )?;
     Ok(tup.into())
 }
 
@@ -2288,10 +2526,8 @@ fn verify_file_integrity(
 ) -> PyResult<PyObject> {
     let kf_hash = if let Some(h) = keyfile_hash {
         Some(h.as_bytes())
-    } else if let Some(kf) = keyfile {
-        Some(kf.as_bytes())
     } else {
-        None
+        keyfile.map(|kf| kf.as_bytes())
     };
     let result = verify_internal(
         py,
@@ -2304,22 +2540,27 @@ fn verify_file_integrity(
     );
     let (ok, code, msg, meta) = match result {
         Ok(params) => (true, DECRYPT_OK, "OK".to_string(), params),
-        Err(e) => (false, e.code, e.message, HeaderParams {
-            version: 0,
-            salt: vec![],
-            nonce_base: 0,
-            plain_size: 0,
-            stored_size: 0,
-            shard_size: 0,
-            k: 0,
-            r: 0,
-            argon2_time: 0,
-            argon2_mem_kib: 0,
-            argon2_par: 0,
-            tag_len: TAG_LEN as u8,
-            flags: 0,
-            filename: String::new(),
-        }),
+        Err(e) => (
+            false,
+            e.code,
+            e.message,
+            HeaderParams {
+                version: 0,
+                salt: vec![],
+                nonce_base: 0,
+                plain_size: 0,
+                stored_size: 0,
+                shard_size: 0,
+                k: 0,
+                r: 0,
+                argon2_time: 0,
+                argon2_mem_kib: 0,
+                argon2_par: 0,
+                tag_len: TAG_LEN as u8,
+                flags: 0,
+                filename: String::new(),
+            },
+        ),
     };
     let dict = PyDict::new(py);
     dict.set_item("filename", meta.filename)?;
@@ -2327,7 +2568,15 @@ fn verify_file_integrity(
     dict.set_item("r", meta.r)?;
     dict.set_item("version", meta.version)?;
     dict.set_item("flags", meta.flags)?;
-    let tup = PyTuple::new(py, &[ok.into_py(py), code.into_py(py), msg.into_py(py), dict.into_py(py)])?;
+    let tup = PyTuple::new(
+        py,
+        &[
+            ok.into_py(py),
+            code.into_py(py),
+            msg.into_py(py),
+            dict.into_py(py),
+        ],
+    )?;
     Ok(tup.into())
 }
 
@@ -2352,7 +2601,7 @@ fn verify_internal(
     let num_blocks = if params.stored_size == 0 {
         1
     } else {
-        (params.stored_size + block_size - 1) / block_size
+        params.stored_size.div_ceil(block_size)
     };
     validate_limits(
         params.k,
@@ -2384,13 +2633,16 @@ fn verify_internal(
     let cipher = Aes256Gcm::new_from_slice(key.as_ref())
         .map_err(|e| CoreError::new(DECRYPT_UNKNOWN_ERROR, e.to_string()))?;
 
-    let mut f_in = BufReader::new(File::open(input_file).map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?);
+    let mut f_in = BufReader::new(
+        File::open(input_file).map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?,
+    );
     if pwchk_present {
         f_in.seek(io::SeekFrom::Start(data_offset))
             .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
         let mut blob = vec![0u8; PWCHK_RECORD_SIZE];
-        f_in.read_exact(&mut blob)
-            .map_err(|_| CoreError::new(DECRYPT_TRUNCATED, "File truncated at password check record"))?;
+        f_in.read_exact(&mut blob).map_err(|_| {
+            CoreError::new(DECRYPT_TRUNCATED, "File truncated at password check record")
+        })?;
         let off = 4 + (4 * CRC_COPIES);
         let ct = &blob[off..off + PWCHK_PLAINTEXT_LEN];
         let tag = &blob[off + PWCHK_PLAINTEXT_LEN..off + PWCHK_PLAINTEXT_LEN + TAG_LEN];
@@ -2400,7 +2652,13 @@ fn verify_internal(
         data.extend_from_slice(ct);
         data.extend_from_slice(tag);
         if cipher
-            .decrypt(Nonce::from_slice(&nonce), Payload { msg: &data, aad: &aad })
+            .decrypt(
+                Nonce::from_slice(&nonce),
+                Payload {
+                    msg: &data,
+                    aad: &aad,
+                },
+            )
             .is_err()
         {
             return Err(CoreError::new(
@@ -2412,7 +2670,9 @@ fn verify_internal(
     }
 
     let g = build_generator_matrix(params.k, params.r)?;
-    let mut f_in = BufReader::new(File::open(input_file).map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?);
+    let mut f_in = BufReader::new(
+        File::open(input_file).map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?,
+    );
     f_in.seek(io::SeekFrom::Start(data_offset))
         .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
 
@@ -2429,16 +2689,28 @@ fn verify_internal(
 
         for shard_index in 0..m {
             let mut crc_fields = [0u8; CRC_BLOCK_SIZE];
-            f_in.read_exact(&mut crc_fields)
-                .map_err(|_| CoreError::new(DECRYPT_TRUNCATED, format!("Unexpected EOF reading shard {shard_index} CRC in block {block_index}")))?;
+            f_in.read_exact(&mut crc_fields).map_err(|_| {
+                CoreError::new(
+                    DECRYPT_TRUNCATED,
+                    format!(
+                        "Unexpected EOF reading shard {shard_index} CRC in block {block_index}"
+                    ),
+                )
+            })?;
             let mut crcs = Vec::new();
             let mut cur = io::Cursor::new(&crc_fields);
             for _ in 0..CRC_COPIES {
                 crcs.push(cur.read_u32::<BigEndian>().unwrap());
             }
             let mut ct = vec![0u8; shard_size];
-            f_in.read_exact(&mut ct)
-                .map_err(|_| CoreError::new(DECRYPT_TRUNCATED, format!("File truncated at shard data (block {block_index}, shard {shard_index})")))?;
+            f_in.read_exact(&mut ct).map_err(|_| {
+                CoreError::new(
+                    DECRYPT_TRUNCATED,
+                    format!(
+                        "File truncated at shard data (block {block_index}, shard {shard_index})"
+                    ),
+                )
+            })?;
             let mut tag = vec![0u8; params.tag_len as usize];
             f_in.read_exact(&mut tag)
                 .map_err(|_| CoreError::new(DECRYPT_TRUNCATED, format!("File truncated at authentication tag (block {block_index}, shard {shard_index})")))?;
@@ -2447,11 +2719,22 @@ fn verify_internal(
                 continue;
             }
             let nonce = nonce12(params.nonce_base, block_index as u32, shard_index as u32);
-            let aad = [prefix.as_slice(), &(block_index as u32).to_be_bytes(), &(shard_index as u32).to_be_bytes()].concat();
+            let aad = [
+                prefix.as_slice(),
+                &(block_index as u32).to_be_bytes(),
+                &(shard_index as u32).to_be_bytes(),
+            ]
+            .concat();
             let mut data = Vec::with_capacity(shard_size + tag.len());
             data.extend_from_slice(&ct);
             data.extend_from_slice(&tag);
-            if let Ok(pt) = cipher.decrypt(Nonce::from_slice(&nonce), Payload { msg: &data, aad: &aad }) {
+            if let Ok(pt) = cipher.decrypt(
+                Nonce::from_slice(&nonce),
+                Payload {
+                    msg: &data,
+                    aad: &aad,
+                },
+            ) {
                 shards[shard_index] = Some(pt);
                 present[shard_index] = true;
             }
