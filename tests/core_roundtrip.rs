@@ -80,12 +80,8 @@ fn verify_fails_when_header_auth_tag_is_tampered() {
     blob[auth_start] ^= 0xAA;
     fs::write(&tampered, blob).expect("write tampered");
 
-    let err = verify_file_integrity_rs(
-        tampered.to_str().expect("utf8 path"),
-        password,
-        None,
-    )
-    .expect_err("verify should fail");
+    let err = verify_file_integrity_rs(tampered.to_str().expect("utf8 path"), password, None)
+        .expect_err("verify should fail");
     assert_eq!(err.code, "HEADER_AUTH_FAILED");
 }
 
