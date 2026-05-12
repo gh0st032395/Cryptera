@@ -12,12 +12,16 @@ let progressValue = null;
 let pauseBtn = null;
 let cancelBtn = null;
 
-export function setStatus(text) {
+export function setStatus(text, level = "info") {
     if (!statusText) {
         statusText = document.getElementById("statusText");
     }
     if (!statusText) return;
     statusText.textContent = text;
+    statusText.classList.remove("status-info", "status-success", "status-warn", "status-error");
+    const allowed = ["info", "success", "warn", "error"];
+    const safeLevel = allowed.includes(level) ? level : "info";
+    statusText.classList.add(`status-${safeLevel}`);
 }
 
 export function setProgress(percent) {
@@ -62,14 +66,26 @@ export function updateMode(mode) {
     if (encFolderBtn) encFolderBtn.disabled = mode !== "folder";
 }
 
-export function renderMetaTo(target, meta) {
+export function renderMetaTo(target, meta, labels = {}) {
+    const noMetaText = labels.noMetaText || "No metadata available.";
+    const typeArchive = labels.typeArchive || "Archive (Folder)";
+    const typeFile = labels.typeFile || "Single File";
+    const hiddenName = labels.hiddenName || "(hidden)";
+    const typeLabel = labels.typeLabel || "Type";
+    const filenameLabel = labels.filenameLabel || "Filename";
+    const versionLabel = labels.versionLabel || "Version";
+    const shardLabel = labels.shardLabel || "Shard";
+    const krLabel = labels.krLabel || "K/R";
+    const plainSizeLabel = labels.plainSizeLabel || "Plain size";
+    const storedSizeLabel = labels.storedSizeLabel || "Stored size";
+
     if (!target) return;
     if (!meta) {
-        target.textContent = "No metadata available.";
+        target.textContent = noMetaText;
         return;
     }
     const isContainer = (meta.flags & 32) !== 0;
-    const typeLabel = isContainer ? "Archive (Folder)" : "Single File";
+    const typeValue = isContainer ? typeArchive : typeFile;
 
     target.innerHTML = "";
 
@@ -82,11 +98,11 @@ export function renderMetaTo(target, meta) {
         return div;
     };
 
-    target.appendChild(createLine("Type", typeLabel));
-    target.appendChild(createLine("Filename", meta.filename || "(hidden)"));
-    target.appendChild(createLine("Version", meta.version));
-    target.appendChild(createLine("Shard", `${meta.shard_size} bytes`));
-    target.appendChild(createLine("K/R", `${meta.k} / ${meta.r}`));
-    target.appendChild(createLine("Plain size", `${meta.plain_size} bytes`));
-    target.appendChild(createLine("Stored size", `${meta.stored_size} bytes`));
+    target.appendChild(createLine(typeLabel, typeValue));
+    target.appendChild(createLine(filenameLabel, meta.filename || hiddenName));
+    target.appendChild(createLine(versionLabel, meta.version));
+    target.appendChild(createLine(shardLabel, `${meta.shard_size} bytes`));
+    target.appendChild(createLine(krLabel, `${meta.k} / ${meta.r}`));
+    target.appendChild(createLine(plainSizeLabel, `${meta.plain_size} bytes`));
+    target.appendChild(createLine(storedSizeLabel, `${meta.stored_size} bytes`));
 }

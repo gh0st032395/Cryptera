@@ -16,4 +16,8 @@
    - `cargo check`
    - `cargo test`
    - `cargo check --manifest-path fuzz/Cargo.toml`
+   - `cargo audit`
+   - `cargo deny check advisories bans licenses sources`
+   - `pushd src-tauri; cargo audit; popd`
+   - `pushd src-tauri; cargo deny check advisories bans licenses sources --config ../deny.toml; popd`
 4. Create tag: `v<version>` (example: `v1.0.0`)

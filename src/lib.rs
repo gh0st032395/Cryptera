@@ -1373,7 +1373,7 @@ fn encrypt_file(
     input_file: &str,
     output_file: &str,
     password: &str,
-    keyfile: Option<&PyBytes>,
+    keyfile: Option<&Bound<'_, PyBytes>>,
     compress_alg: Option<&str>,
     enable_pwchk: bool,
     k: Option<u16>,
@@ -1386,7 +1386,7 @@ fn encrypt_file(
     cancel_event: Option<Py<PyAny>>,
     progress_cb: Option<Py<PyAny>>,
     original_filename: Option<&str>,
-    keyfile_hash: Option<&PyBytes>,
+    keyfile_hash: Option<&Bound<'_, PyBytes>>,
     is_tar_container: bool,
 ) -> PyResult<()> {
     let k = k.unwrap_or(K_DATA);
@@ -2197,11 +2197,11 @@ fn decrypt_file_ex(
     input_file: &str,
     output_file: &str,
     password: &str,
-    keyfile: Option<&PyBytes>,
+    keyfile: Option<&Bound<'_, PyBytes>>,
     control_event: Option<Py<PyAny>>,
     cancel_event: Option<Py<PyAny>>,
     progress_cb: Option<Py<PyAny>>,
-    keyfile_hash: Option<&PyBytes>,
+    keyfile_hash: Option<&Bound<'_, PyBytes>>,
 ) -> PyResult<PyObject> {
     let kf_hash = if let Some(h) = keyfile_hash {
         Some(h.as_bytes())
@@ -2246,28 +2246,32 @@ fn decrypt_file_ex(
     dict.set_item("r", meta.r)?;
     dict.set_item("version", meta.version)?;
     dict.set_item("flags", meta.flags)?;
-    let tup = PyTuple::new(py, &[ok.into_py(py), code.into_py(py), msg.into_py(py), dict.into_py(py)]);
+    let tup = PyTuple::new(py, &[ok.into_py(py), code.into_py(py), msg.into_py(py), dict.into_py(py)])?;
     Ok(tup.into())
 }
 
 #[pyfunction]
-fn decrypt_file(input_file: &str, output_file: &str, password: &str, progress_cb: Option<Py<PyAny>>, keyfile_hash: Option<&PyBytes>) -> PyResult<bool> {
-    Python::with_gil(|py| {
-        let res = decrypt_file_ex(
-            py,
-            input_file,
-            output_file,
-            password,
-            None,
-            None,
-            None,
-            progress_cb,
-            keyfile_hash,
-        )?;
-        let tup: &PyTuple = res.extract(py)?;
-        let ok: bool = tup.get_item(0)?.extract()?;
-        Ok(ok)
-    })
+fn decrypt_file(
+    py: Python,
+    input_file: &str,
+    output_file: &str,
+    password: &str,
+    progress_cb: Option<Py<PyAny>>,
+    keyfile_hash: Option<&Bound<'_, PyBytes>>,
+) -> PyResult<bool> {
+    let kf_hash = keyfile_hash.map(|h| h.as_bytes());
+    let ok = decrypt_internal(
+        py,
+        input_file,
+        output_file,
+        password,
+        kf_hash,
+        None,
+        None,
+        progress_cb,
+    )
+    .is_ok();
+    Ok(ok)
 }
 
 #[pyfunction]
@@ -2276,11 +2280,11 @@ fn verify_file_integrity(
     py: Python,
     input_file: &str,
     password: &str,
-    keyfile: Option<&PyBytes>,
+    keyfile: Option<&Bound<'_, PyBytes>>,
     control_event: Option<Py<PyAny>>,
     cancel_event: Option<Py<PyAny>>,
     progress_cb: Option<Py<PyAny>>,
-    keyfile_hash: Option<&PyBytes>,
+    keyfile_hash: Option<&Bound<'_, PyBytes>>,
 ) -> PyResult<PyObject> {
     let kf_hash = if let Some(h) = keyfile_hash {
         Some(h.as_bytes())
@@ -2323,7 +2327,7 @@ fn verify_file_integrity(
     dict.set_item("r", meta.r)?;
     dict.set_item("version", meta.version)?;
     dict.set_item("flags", meta.flags)?;
-    let tup = PyTuple::new(py, &[ok.into_py(py), code.into_py(py), msg.into_py(py), dict.into_py(py)]);
+    let tup = PyTuple::new(py, &[ok.into_py(py), code.into_py(py), msg.into_py(py), dict.into_py(py)])?;
     Ok(tup.into())
 }
 
@@ -2491,7 +2495,7 @@ fn read_metadata(path: &str) -> PyResult<PyObject> {
 }
 
 #[pymodule]
-fn crypto_core_rs(_py: Python, m: &PyModule) -> PyResult<()> {
+fn crypto_core_rs(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(encrypt_file, m)?)?;
     m.add_function(wrap_pyfunction!(decrypt_file, m)?)?;
     m.add_function(wrap_pyfunction!(decrypt_file_ex, m)?)?;
