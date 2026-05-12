@@ -1,3 +1,7 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+mod audit;
+
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -13,13 +17,17 @@ use crypto_core_rs::{
     MetaInfo,
 };
 use serde::{Deserialize, Serialize};
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 use tauri_plugin_dialog::DialogExt;
 use tempfile::NamedTempFile;
 
 #[derive(Default)]
 struct AppState {
     control: Mutex<Option<ControlFlags>>,
+}
+
+struct AuditState {
+    logger: Mutex<audit::AuditLogger>,
 }
 
 fn set_active_control(state: &tauri::State<'_, AppState>, ctrl: ControlFlags) -> Result<(), String> {
@@ -99,6 +107,12 @@ struct ProgressPayload {
 }
 
 #[derive(Serialize, Clone)]
+struct StatusPayload {
+    code: String,
+    message: String,
+}
+
+#[derive(Serialize, Clone)]
 struct MetaInfoDto {
     filename: String,
     version: u8,
@@ -136,6 +150,11 @@ struct DecryptResult {
     meta: Option<MetaInfoDto>,
 }
 
+#[derive(Serialize)]
+struct VerifyResult {
+    meta: MetaInfoDto,
+}
+
 fn sec_profile_params(profile: &str) -> (u32, u32, u16) {
     match profile {
         "Strong" => (6, 256 * 1024, 4),
@@ -153,8 +172,12 @@ fn int_profile_params(profile: &str) -> (u16, u16) {
     }
 }
 
-fn emit_status(window: &tauri::Window, msg: &str) {
-    let _ = window.emit("status", msg.to_string());
+fn emit_status(window: &tauri::Window, code: &str, message: &str) {
+    let payload = StatusPayload {
+        code: code.to_string(),
+        message: message.to_string(),
+    };
+    let _ = window.emit("status", payload);
 }
 
 fn emit_progress(window: &tauri::Window, stage: &str, done: u64, total: u64) {
@@ -170,7 +193,6 @@ fn emit_progress(window: &tauri::Window, stage: &str, done: u64, total: u64) {
         percent,
     };
     let _ = window.emit("progress", payload);
-    let _ = window.emit("status", format!("{stage}: {done}/{total}"));
 }
 
 fn ensure_parent_dir(path: &str) -> Result<(), String> {
@@ -356,7 +378,12 @@ fn cancel_job(state: tauri::State<AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn encrypt(req: EncryptRequest, window: tauri::Window, state: tauri::State<'_, AppState>) -> Result<(), String> {
+async fn encrypt(
+    req: EncryptRequest,
+    window: tauri::Window,
+    state: tauri::State<'_, AppState>,
+    audit_state: tauri::State<'_, AuditState>,
+) -> Result<(), String> {
     if req.password.expose_secret().trim().is_empty() {
         return Err("Password required".to_string());
     }
@@ -373,6 +400,14 @@ async fn encrypt(req: EncryptRequest, window: tauri::Window, state: tauri::State
 
     ensure_parent_dir(&req.output_file)?;
 
+    let input_path = if !req.input_file.is_empty() {
+        req.input_file.clone()
+    } else {
+        req.input_folder.clone()
+    };
+    let size_mb = audit::file_size_mb(&input_path);
+    let t0 = std::time::Instant::now();
+
     let ctrl = ControlFlags {
         cancel: Arc::new(AtomicBool::new(false)),
         pause: Arc::new(AtomicBool::new(false)),
@@ -385,7 +420,7 @@ async fn encrypt(req: EncryptRequest, window: tauri::Window, state: tauri::State
 
     let window_clone = window.clone();
     let join_res = tauri::async_runtime::spawn_blocking(move || {
-        emit_status(&window_clone, "Starting encryption...");
+        emit_status(&window_clone, "backend_enc_start", "Starting encryption...");
         let kf_hash = match req.keyfile_path.as_deref() {
             Some(p) => Some(get_keyfile_hash_rs(p).map_err(|e| e.message)?),
             None => None,
@@ -394,7 +429,7 @@ async fn encrypt(req: EncryptRequest, window: tauri::Window, state: tauri::State
         let (k, r) = int_profile_params(&req.int_profile);
 
         if !req.input_folder.is_empty() {
-            emit_status(&window_clone, "Creating archive...");
+            emit_status(&window_clone, "backend_enc_archiving", "Creating archive...");
             let mut archive_progress = |done: u64| {
                 emit_progress(&window_clone, "archiving", done, 0);
             };
@@ -425,7 +460,7 @@ async fn encrypt(req: EncryptRequest, window: tauri::Window, state: tauri::State
             )
             .map_err(|e| e.message)?;
         } else {
-             let comp = if req.file_comp == "none" { None } else { Some(req.file_comp.as_str()) };
+            let comp = if req.file_comp == "none" { None } else { Some(req.file_comp.as_str()) };
             let original_name = if req.hide_filename { Some("") } else { None };
             let tmp_output_path = format!("{}.tmp", req.output_file);
             let mut progress = |stage: &str, done: u64, total: u64| {
@@ -450,26 +485,46 @@ async fn encrypt(req: EncryptRequest, window: tauri::Window, state: tauri::State
                 Some(&mut progress),
             )
             .map_err(|e| e.message)?;
-            
             // Atomic rename
-            std::fs::rename(&tmp_output_path, &req.output_file).map_err(|e| format!("Failed to rename temp file: {}", e))?;
+            std::fs::rename(&tmp_output_path, &req.output_file)
+                .map_err(|e| format!("Failed to rename temp file: {}", e))?;
         }
         emit_progress(&window_clone, "encrypt", 1, 1);
-        emit_status(&window_clone, "Encryption complete");
+        emit_status(&window_clone, "backend_enc_complete", "Encryption complete");
         Ok(())
     })
     .await;
 
-    let res = match join_res {
+    let res: Result<(), String> = match join_res {
         Ok(inner) => inner,
         Err(e) => Err(e.to_string()),
     };
     clear_active_control(&state)?;
+
+    // Write audit entry
+    let entry = audit::AuditEntry {
+        ts: audit::unix_now(),
+        op: "encrypt".to_string(),
+        file: input_path,
+        size_mb,
+        duration_s: Some(t0.elapsed().as_secs_f64()),
+        status: if res.is_ok() { "OK" } else { "ERR" }.to_string(),
+        error: res.as_ref().err().cloned(),
+    };
+    if let Ok(logger) = audit_state.logger.lock() {
+        let _ = logger.log(&entry);
+    }
+
     res
 }
 
 #[tauri::command]
-async fn decrypt(req: DecryptRequest, window: tauri::Window, state: tauri::State<'_, AppState>) -> Result<DecryptResult, String> {
+async fn decrypt(
+    req: DecryptRequest,
+    window: tauri::Window,
+    state: tauri::State<'_, AppState>,
+    audit_state: tauri::State<'_, AuditState>,
+) -> Result<DecryptResult, String> {
     if req.password.expose_secret().trim().is_empty() {
         return Err("Password required".to_string());
     }
@@ -489,6 +544,10 @@ async fn decrypt(req: DecryptRequest, window: tauri::Window, state: tauri::State
         ensure_parent_dir(&req.output_path)?;
     }
 
+    let input_path = req.input_file.clone();
+    let size_mb = audit::file_size_mb(&input_path);
+    let t0 = std::time::Instant::now();
+
     let ctrl = ControlFlags {
         cancel: Arc::new(AtomicBool::new(false)),
         pause: Arc::new(AtomicBool::new(false)),
@@ -501,7 +560,7 @@ async fn decrypt(req: DecryptRequest, window: tauri::Window, state: tauri::State
 
     let window_clone = window.clone();
     let join_res = tauri::async_runtime::spawn_blocking(move || -> Result<DecryptResult, String> {
-        emit_status(&window_clone, "Starting decryption...");
+        emit_status(&window_clone, "backend_dec_start", "Starting decryption...");
         let kf_hash = match req.keyfile_path.as_deref() {
             Some(p) => Some(get_keyfile_hash_rs(p).map_err(|e| e.message)?),
             None => None,
@@ -520,18 +579,15 @@ async fn decrypt(req: DecryptRequest, window: tauri::Window, state: tauri::State
                 Some(&mut progress),
             )
             .map_err(|e| e.message)?;
-            
             // Atomic rename
-            std::fs::rename(&tmp_output_path, &req.output_path).map_err(|e| format!("Failed to rename temp file: {}", e))?;
-
+            std::fs::rename(&tmp_output_path, &req.output_path)
+                .map_err(|e| format!("Failed to rename temp file: {}", e))?;
             emit_progress(&window_clone, "decrypt", 1, 1);
-            emit_status(&window_clone, "Decryption complete");
-            return Ok(DecryptResult {
-                meta: Some(MetaInfoDto::from(meta)),
-            });
+            emit_status(&window_clone, "backend_dec_complete", "Decryption complete");
+            return Ok(DecryptResult { meta: Some(MetaInfoDto::from(meta)) });
         }
 
-        emit_status(&window_clone, "Decrypting archive...");
+        emit_status(&window_clone, "backend_dec_archive", "Decrypting archive...");
         let tmp_tar = NamedTempFile::new().map_err(|e| e.to_string())?;
         let tar_path = tmp_tar.path().to_string_lossy().to_string();
         let mut progress = |stage: &str, done: u64, total: u64| {
@@ -547,7 +603,7 @@ async fn decrypt(req: DecryptRequest, window: tauri::Window, state: tauri::State
         )
         .map_err(|e| e.message)?;
 
-        emit_status(&window_clone, "Extracting files...");
+        emit_status(&window_clone, "backend_dec_extract", "Extracting files...");
         safe_extract_tar(&tar_path, &req.output_path).map_err(|e| e.to_string())?;
 
         if req.keep_tar {
@@ -556,29 +612,51 @@ async fn decrypt(req: DecryptRequest, window: tauri::Window, state: tauri::State
         }
 
         emit_progress(&window_clone, "decrypt", 1, 1);
-        emit_status(&window_clone, "Extraction complete");
-        Ok(DecryptResult {
-            meta: Some(MetaInfoDto::from(meta)),
-        })
+        emit_status(&window_clone, "backend_dec_complete", "Extraction complete");
+        Ok(DecryptResult { meta: Some(MetaInfoDto::from(meta)) })
     })
     .await;
 
-    let res = match join_res {
+    let res: Result<DecryptResult, String> = match join_res {
         Ok(inner) => inner,
         Err(e) => Err(e.to_string()),
     };
     clear_active_control(&state)?;
+
+    // Write audit entry
+    let entry = audit::AuditEntry {
+        ts: audit::unix_now(),
+        op: "decrypt".to_string(),
+        file: input_path,
+        size_mb,
+        duration_s: Some(t0.elapsed().as_secs_f64()),
+        status: if res.is_ok() { "OK" } else { "ERR" }.to_string(),
+        error: res.as_ref().err().cloned(),
+    };
+    if let Ok(logger) = audit_state.logger.lock() {
+        let _ = logger.log(&entry);
+    }
+
     res
 }
 
 #[tauri::command]
-async fn verify(req: VerifyRequest, window: tauri::Window, state: tauri::State<'_, AppState>) -> Result<(), String> {
+async fn verify(
+    req: VerifyRequest,
+    window: tauri::Window,
+    state: tauri::State<'_, AppState>,
+    audit_state: tauri::State<'_, AuditState>,
+) -> Result<VerifyResult, String> {
     if req.password.expose_secret().trim().is_empty() {
         return Err("Password required".to_string());
     }
     if req.input_file.is_empty() {
         return Err("Input file required".to_string());
     }
+
+    let input_path = req.input_file.clone();
+    let size_mb = audit::file_size_mb(&input_path);
+    let t0 = std::time::Instant::now();
 
     let ctrl = ControlFlags {
         cancel: Arc::new(AtomicBool::new(false)),
@@ -591,8 +669,8 @@ async fn verify(req: VerifyRequest, window: tauri::Window, state: tauri::State<'
     set_active_control(&state, ctrl_state)?;
 
     let window_clone = window.clone();
-    let join_res = tauri::async_runtime::spawn_blocking(move || {
-        emit_status(&window_clone, "Verifying...");
+    let join_res = tauri::async_runtime::spawn_blocking(move || -> Result<VerifyResult, String> {
+        emit_status(&window_clone, "backend_verify_start", "Verifying...");
         let kf_hash = match req.keyfile_path.as_deref() {
             Some(p) => Some(get_keyfile_hash_rs(p).map_err(|e| e.message)?),
             None => None,
@@ -600,7 +678,7 @@ async fn verify(req: VerifyRequest, window: tauri::Window, state: tauri::State<'
         let mut progress = |stage: &str, done: u64, total: u64| {
             emit_progress(&window_clone, stage, done, total);
         };
-        verify_file_integrity_rs_controlled(
+        let meta = verify_file_integrity_rs_controlled(
             &req.input_file,
             req.password.expose_secret(),
             kf_hash.as_deref(),
@@ -608,16 +686,31 @@ async fn verify(req: VerifyRequest, window: tauri::Window, state: tauri::State<'
             Some(&mut progress),
         )
         .map_err(|e| e.message)?;
-        emit_status(&window_clone, "Verification OK");
-        Ok(())
+        emit_status(&window_clone, "backend_verify_ok", "Verification OK");
+        Ok(VerifyResult { meta: MetaInfoDto::from(meta) })
     })
     .await;
 
-    let res = match join_res {
+    let res: Result<VerifyResult, String> = match join_res {
         Ok(inner) => inner,
         Err(e) => Err(e.to_string()),
     };
     clear_active_control(&state)?;
+
+    // Write audit entry
+    let entry = audit::AuditEntry {
+        ts: audit::unix_now(),
+        op: "verify".to_string(),
+        file: input_path,
+        size_mb,
+        duration_s: Some(t0.elapsed().as_secs_f64()),
+        status: if res.is_ok() { "OK" } else { "ERR" }.to_string(),
+        error: res.as_ref().err().cloned(),
+    };
+    if let Ok(logger) = audit_state.logger.lock() {
+        let _ = logger.log(&entry);
+    }
+
     res
 }
 
@@ -631,17 +724,47 @@ fn read_metadata(req: MetadataRequest) -> Result<MetaInfoDto, String> {
         .map_err(|e| e.message)
 }
 
+/// Audit log commands
 #[tauri::command]
-async fn open_file_dialog(window: tauri::Window, default_path: Option<String>) -> Result<Option<String>, String> {
+fn get_audit_log(audit_state: tauri::State<'_, AuditState>) -> Result<Vec<audit::AuditEntry>, String> {
+    let logger = audit_state.logger.lock().map_err(|_| "State lock failed".to_string())?;
+    Ok(logger.read_recent(500))
+}
+
+#[tauri::command]
+fn clear_audit_log(audit_state: tauri::State<'_, AuditState>) -> Result<(), String> {
+    let logger = audit_state.logger.lock().map_err(|_| "State lock failed".to_string())?;
+    logger.clear()
+}
+
+/// Open file dialog — supports single or multiple selection.
+#[tauri::command]
+async fn open_file_dialog(
+    window: tauri::Window,
+    default_path: Option<String>,
+    multiple: Option<bool>,
+) -> Result<serde_json::Value, String> {
+    let multi = multiple.unwrap_or(false);
     tauri::async_runtime::spawn_blocking(move || {
         let mut builder = window.dialog().file();
         if let Some(path) = default_path {
             builder = builder.set_directory(path);
         }
-        let file = builder.blocking_pick_file();
-        Ok(file
-            .and_then(|p| p.into_path().ok())
-            .map(|p| p.to_string_lossy().to_string()))
+        if multi {
+            let files = builder.blocking_pick_files();
+            let paths: Vec<String> = files
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|p| p.into_path().ok())
+                .map(|p| p.to_string_lossy().to_string())
+                .collect();
+            Ok(serde_json::json!(paths))
+        } else {
+            let file = builder.blocking_pick_file();
+            Ok(serde_json::json!(file
+                .and_then(|p| p.into_path().ok())
+                .map(|p| p.to_string_lossy().to_string())))
+        }
     })
     .await
     .map_err(|e| e.to_string())?
@@ -687,10 +810,109 @@ async fn save_file_dialog(window: tauri::Window, default_path: Option<String>) -
     .map_err(|e| e.to_string())?
 }
 
+/// Build a 16×16 RGBA icon with a stylised lock shape.
+fn build_tray_icon_rgba() -> (Vec<u8>, u32, u32) {
+    const W: usize = 16;
+    const H: usize = 16;
+    let mut data = vec![0u8; W * H * 4];
+    let set = |data: &mut Vec<u8>, x: usize, y: usize, rgba: [u8; 4]| {
+        let i = (y * W + x) * 4;
+        data[i..i + 4].copy_from_slice(&rgba);
+    };
+    let accent = [0x35u8, 0xd0u8, 0xa1u8, 0xffu8]; // #35d0a1
+    // Shackle (top arc of lock): rows 2–7, columns 4–11
+    for y in 2usize..=7 {
+        for x in 4usize..=11 {
+            let on_left_wall  = x == 4  && y >= 5;
+            let on_right_wall = x == 11 && y >= 5;
+            let on_top        = y == 2  && x >= 5 && x <= 10;
+            let on_side_top   = (x == 5 || x == 10) && y == 3;
+            if on_left_wall || on_right_wall || on_top || on_side_top {
+                set(&mut data, x, y, accent);
+            }
+        }
+    }
+    // Body (rectangle): rows 7–13, columns 3–12
+    for y in 7usize..=13 {
+        for x in 3usize..=12 {
+            set(&mut data, x, y, accent);
+        }
+    }
+    // Keyhole cutout in body
+    for y in 9usize..=12 {
+        for x in 6usize..=9 {
+            let top_circle = y == 9 && x >= 6 && x <= 9;
+            let stem = y >= 10 && y <= 12 && x == 7;
+            let stem2 = y >= 10 && y <= 12 && x == 8;
+            if !(top_circle || stem || stem2) {
+                set(&mut data, x, y, [0x00, 0x00, 0x00, 0x00]);
+            }
+        }
+    }
+    (data, W as u32, H as u32)
+}
+
 fn main() {
+    let log_dir = audit::default_log_dir();
+    let audit_logger = audit::AuditLogger::new(log_dir);
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
+        .manage(AuditState {
+            logger: Mutex::new(audit_logger),
+        })
+        .setup(|app| {
+            use tauri::menu::{MenuBuilder, MenuItemBuilder};
+            use tauri::tray::TrayIconBuilder;
+
+            let show_item = MenuItemBuilder::with_id("show", "Open Cryptera").build(app)?;
+            let quit_item = MenuItemBuilder::with_id("quit", "Quit").build(app)?;
+            let menu = MenuBuilder::new(app)
+                .items(&[&show_item, &quit_item])
+                .build()?;
+
+            let (rgba, w, h) = build_tray_icon_rgba();
+            let icon = tauri::image::Image::new_owned(rgba, w, h);
+
+            TrayIconBuilder::new()
+                .menu(&menu)
+                .tooltip("Cryptera — right-click for options")
+                .icon(icon)
+                .on_menu_event(|app, event| match event.id().as_ref() {
+                    "show" => {
+                        if let Some(win) = app.get_webview_window("main") {
+                            let _ = win.show();
+                            let _ = win.set_focus();
+                        }
+                    }
+                    "quit" => app.exit(0),
+                    _ => {}
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let tauri::tray::TrayIconEvent::DoubleClick { .. } = event {
+                        let app = tray.app_handle();
+                        if let Some(win) = app.get_webview_window("main") {
+                            let _ = win.show();
+                            let _ = win.set_focus();
+                        }
+                    }
+                })
+                .build(app)?;
+
+            // Override window close → hide to tray (first close hides, tray "Quit" exits)
+            if let Some(win) = app.get_webview_window("main") {
+                let win_hide = win.clone();
+                win.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = win_hide.hide();
+                    }
+                });
+            }
+
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             encrypt,
             decrypt,
@@ -700,7 +922,9 @@ fn main() {
             cancel_job,
             open_file_dialog,
             open_folder_dialog,
-            save_file_dialog
+            save_file_dialog,
+            get_audit_log,
+            clear_audit_log,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -709,6 +933,8 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::File;
+    use tempfile::tempdir;
 
     #[test]
     fn security_profile_mapping_is_stable() {
@@ -733,5 +959,52 @@ mod tests {
         assert_eq!(tar_suffix("gz"), ".tar.gz");
         assert_eq!(tar_suffix("bz2"), ".tar.bz2");
         assert_eq!(tar_suffix("xz"), ".tar.xz");
+    }
+
+    #[test]
+    fn safe_extract_tar_rejects_zip_slip_entries() {
+        let dir = tempdir().expect("tempdir");
+        let tar_path = dir.path().join("malicious.tar");
+        let out_dir = dir.path().join("out");
+        std::fs::create_dir_all(&out_dir).expect("create out dir");
+
+        // Build a valid tar first.
+        {
+            let tar_file = File::create(&tar_path).expect("create tar");
+            let mut builder = tar::Builder::new(tar_file);
+            let payload = b"evil";
+            let mut header = tar::Header::new_gnu();
+            header.set_size(payload.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder
+                .append_data(&mut header, "safe.txt", &payload[..])
+                .expect("append safe entry");
+            builder.finish().expect("finish tar");
+        }
+
+        // Mutate first entry name to "../escape.txt" and fix checksum.
+        let mut raw = std::fs::read(&tar_path).expect("read tar");
+        let header = &mut raw[..512];
+        for b in &mut header[..100] {
+            *b = 0;
+        }
+        let evil_name = b"../escape.txt";
+        header[..evil_name.len()].copy_from_slice(evil_name);
+        for b in &mut header[148..156] {
+            *b = b' ';
+        }
+        let sum: u32 = header.iter().map(|b| *b as u32).sum();
+        let chk = format!("{:06o}\0 ", sum);
+        header[148..156].copy_from_slice(chk.as_bytes());
+        std::fs::write(&tar_path, &raw).expect("write mutated tar");
+
+        let err = safe_extract_tar(
+            tar_path.to_str().expect("utf8 path"),
+            out_dir.to_str().expect("utf8 path"),
+        )
+        .expect_err("zip slip path must be rejected");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(!dir.path().join("escape.txt").exists());
     }
 }

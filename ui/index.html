@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CryptoV2</title>
+  <title>Cryptera</title>
   <link rel="stylesheet" href="./styles.css" />
 </head>
 
@@ -12,9 +12,15 @@
   <div data-tauri-drag-region class="titlebar">
     <div class="titlebar-logo">
       <div class="logo-icon-sm"></div>
-      <span>CryptoV2</span>
+      <span>Cryptera</span>
     </div>
     <div class="titlebar-controls">
+      <button class="theme-toggle-btn" id="themeToggleBtn" title="Toggle theme" aria-label="Toggle theme">
+        <!-- icon set by JS -->
+        <svg id="themeIcon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+        </svg>
+      </button>
       <div class="titlebar-button" id="titlebar-minimize">
         <svg width="10" height="1" viewBox="0 0 10 1">
           <path d="M0 0h10v1H0z" />
@@ -32,12 +38,13 @@
       </div>
     </div>
   </div>
+
   <div class="app-layout">
     <aside class="sidebar">
       <div class="brand">
         <div class="logo">C2</div>
         <div class="brand-text">
-          <span class="title">CryptoV2</span>
+          <span class="title">Cryptera</span>
           <span class="subtitle">Local Encryption</span>
         </div>
       </div>
@@ -48,6 +55,12 @@
           aria-controls="panel-decrypt">Decrypt</button>
         <button class="nav-item" data-tab="verify" data-i18n="nav_verify" role="tab" aria-selected="false"
           aria-controls="panel-verify">Verify</button>
+        <button class="nav-item" data-tab="batch" data-i18n="nav_batch" role="tab" aria-selected="false"
+          aria-controls="panel-batch">Batch</button>
+        <button class="nav-item" data-tab="history" data-i18n="nav_history" role="tab" aria-selected="false"
+          aria-controls="panel-history">History</button>
+        <button class="nav-item" data-tab="audit" data-i18n="nav_audit" role="tab" aria-selected="false"
+          aria-controls="panel-audit">Audit</button>
         <button class="nav-item" data-tab="about" data-i18n="nav_about" role="tab" aria-selected="false"
           aria-controls="panel-about">About</button>
       </nav>
@@ -86,6 +99,7 @@
         </div>
       </section>
 
+      <!-- ===== ENCRYPT PANEL ===== -->
       <section id="panel-encrypt" class="panel active">
         <div class="panel-header">
           <h2 data-i18n="panel_encrypt_title">Encrypt</h2>
@@ -126,6 +140,16 @@
             <div class="field">
               <label data-i18n="label_password">Password</label>
               <input id="encPassword" type="password" placeholder="Required" />
+              <div class="password-meter">
+                <div class="password-meter-track">
+                  <div id="encPasswordStrengthFill" class="password-meter-fill strength-0"></div>
+                </div>
+                <div id="encPasswordStrengthText" class="password-meter-text">Strength: very weak</div>
+                <div id="encPasswordFeedback" class="password-policy"></div>
+                <div id="encPasswordPolicy" class="password-policy" data-i18n="pwd_policy_encrypt">
+                  Encryption password policy: at least 10 chars and medium strength.
+                </div>
+              </div>
             </div>
             <div class="field">
               <label data-i18n="label_keyfile">Keyfile (optional)</label>
@@ -234,6 +258,7 @@
         </div>
       </section>
 
+      <!-- ===== DECRYPT PANEL ===== -->
       <section id="panel-decrypt" class="panel">
         <div class="panel-header">
           <h2 data-i18n="panel_decrypt_title">Decrypt</h2>
@@ -268,6 +293,12 @@
             <div class="field">
               <label data-i18n="label_password">Password</label>
               <input id="decPassword" type="password" placeholder="Required" />
+              <div class="password-meter">
+                <div class="password-meter-track">
+                  <div id="decPasswordStrengthFill" class="password-meter-fill strength-0"></div>
+                </div>
+                <div id="decPasswordStrengthText" class="password-meter-text">Strength: very weak</div>
+              </div>
             </div>
             <div class="field">
               <label data-i18n="label_keyfile">Keyfile (optional)</label>
@@ -291,6 +322,7 @@
         </div>
       </section>
 
+      <!-- ===== VERIFY PANEL ===== -->
       <section id="panel-verify" class="panel">
         <div class="panel-header">
           <h2 data-i18n="panel_verify_title">Verify</h2>
@@ -317,6 +349,12 @@
             <div class="field">
               <label data-i18n="label_password">Password</label>
               <input id="verPassword" type="password" placeholder="Required" />
+              <div class="password-meter">
+                <div class="password-meter-track">
+                  <div id="verPasswordStrengthFill" class="password-meter-fill strength-0"></div>
+                </div>
+                <div id="verPasswordStrengthText" class="password-meter-text">Strength: very weak</div>
+              </div>
             </div>
             <div class="field">
               <label data-i18n="label_keyfile">Keyfile (optional)</label>
@@ -325,6 +363,11 @@
                 <button id="verKeyfileBtn" class="primary" data-i18n="btn_choose">Choose</button>
               </div>
             </div>
+            <!-- Verify result details (populated after successful verification) -->
+            <div id="verResultBox" class="meta-box" style="display:none;">
+              <div class="meta-title" data-i18n="ver_result_title">Verification Result</div>
+              <div id="verResultContent" class="meta-content"></div>
+            </div>
           </div>
         </div>
         <div class="panel-actions">
@@ -332,15 +375,119 @@
         </div>
       </section>
 
+      <!-- ===== BATCH DECRYPT PANEL ===== -->
+      <section id="panel-batch" class="panel">
+        <div class="panel-header">
+          <h2 data-i18n="panel_batch_title">Batch Decrypt</h2>
+          <p data-i18n="panel_batch_desc">Decrypt multiple .ecf files with a single password.</p>
+        </div>
+        <div class="panel-grid">
+          <div class="card">
+            <div class="card-title" data-i18n="card_batch_files">Files</div>
+            <div id="batchFileList" class="batch-file-list">
+              <div class="batch-empty" data-i18n="batch_empty">No files added. Click "Add Files" to begin.</div>
+            </div>
+            <div class="control-row" style="margin-top:16px;">
+              <button id="batchAddBtn" class="primary" data-i18n="btn_batch_add">Add Files</button>
+              <button id="batchRemoveBtn" class="ghost" data-i18n="btn_batch_remove">Remove Selected</button>
+              <button id="batchClearBtn" class="ghost danger" data-i18n="btn_batch_clear">Clear All</button>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title" data-i18n="card_credentials">Credentials</div>
+            <div class="field">
+              <label data-i18n="label_password">Password</label>
+              <input id="batchPassword" type="password" placeholder="Required" />
+            </div>
+            <div class="field">
+              <label data-i18n="label_keyfile">Keyfile (optional)</label>
+              <div class="input-row">
+                <input id="batchKeyfile" type="text" placeholder="Select keyfile" />
+                <button id="batchKeyfileBtn" class="primary" data-i18n="btn_choose">Choose</button>
+              </div>
+            </div>
+            <div class="field">
+              <label data-i18n="label_output_path">Output folder</label>
+              <div class="input-row">
+                <input id="batchOutputFolder" type="text" placeholder="Same as source (default)" />
+                <button id="batchOutputFolderBtn" class="primary" data-i18n="btn_select">Select</button>
+              </div>
+            </div>
+            <div class="checkbox">
+              <input id="batchExtract" type="checkbox" checked />
+              <label for="batchExtract" data-i18n="check_auto_extract">Auto extract TAR containers</label>
+            </div>
+            <!-- Batch summary (shown after completion) -->
+            <div id="batchSummaryBox" class="meta-box" style="display:none;">
+              <div class="meta-title" data-i18n="batch_summary_title">Batch Summary</div>
+              <div id="batchSummaryContent" class="meta-content"></div>
+            </div>
+          </div>
+        </div>
+        <div class="panel-actions">
+          <button id="batchDecryptBtn" class="cta" data-i18n="btn_batch_start">Start Batch Decrypt</button>
+        </div>
+      </section>
+
+      <!-- ===== HISTORY PANEL ===== -->
+      <section id="panel-history" class="panel">
+        <div class="panel-header">
+          <h2 data-i18n="panel_history_title">Operation History</h2>
+          <p data-i18n="panel_history_desc">In-memory log of recent operations (last 100). Cleared on exit.</p>
+        </div>
+        <div class="card wide">
+          <div id="historyList" class="history-list">
+            <div class="history-empty" data-i18n="history_empty">No operations yet.</div>
+          </div>
+        </div>
+        <div class="panel-actions">
+          <button id="clearHistoryBtn" class="ghost danger" data-i18n="btn_clear_history">Clear History</button>
+        </div>
+      </section>
+
+      <!-- ===== AUDIT LOG PANEL ===== -->
+      <section id="panel-audit" class="panel">
+        <div class="panel-header">
+          <h2 data-i18n="panel_audit_title">Audit Log</h2>
+          <p data-i18n="panel_audit_desc">Persistent JSONL log of all operations. Stored locally.</p>
+        </div>
+        <div class="card wide">
+          <div class="audit-table-wrap">
+            <table class="audit-table" id="auditTable">
+              <thead>
+                <tr>
+                  <th data-i18n="audit_col_ts">Timestamp</th>
+                  <th data-i18n="audit_col_op">Operation</th>
+                  <th data-i18n="audit_col_file">File</th>
+                  <th data-i18n="audit_col_size">Size</th>
+                  <th data-i18n="audit_col_duration">Duration</th>
+                  <th data-i18n="audit_col_status">Status</th>
+                </tr>
+              </thead>
+              <tbody id="auditTableBody">
+                <tr>
+                  <td colspan="6" class="audit-empty" data-i18n="audit_empty">No entries.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel-actions">
+          <button id="refreshAuditBtn" class="ghost" data-i18n="btn_audit_refresh">Refresh</button>
+          <button id="clearAuditBtn" class="ghost danger" data-i18n="btn_audit_clear">Clear Log</button>
+        </div>
+      </section>
+
+      <!-- ===== ABOUT PANEL ===== -->
       <section id="panel-about" class="panel">
         <div class="panel-header">
           <h2 data-i18n="panel_about_title">About</h2>
           <p data-i18n="panel_about_desc">Sicurezza locale, senza compromessi.</p>
         </div>
         <div class="card wide">
-          <div class="card-title">CryptoV2</div>
+          <div class="card-title">Cryptera</div>
           <p data-i18n="about_text">
-            CryptoV2 e' un'app di cifratura locale basata su Rust. Usa AES-GCM e Argon2id con
+            Cryptera e' un'app di cifratura locale basata su Rust. Usa AES-GCM e Argon2id con
             codifica ridondante per integrita' e recupero. Nessun upload, nessun servizio esterno.
           </p>
           <div class="pill-row">
