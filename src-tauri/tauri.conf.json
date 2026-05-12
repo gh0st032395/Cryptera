@@ -40,12 +40,6 @@
     ]
   },
   "plugins": {
-    "dialog": null,
-    "updater": {
-      "pubkey": "",
-      "endpoints": [
-        "https://releases.cryptera.app/{{target}}/{{arch}}/{{current_version}}"
-      ]
-    }
+    "dialog": null
   }
 }

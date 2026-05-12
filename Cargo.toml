@@ -6,10 +6,9 @@ license = "MIT OR Apache-2.0"
 
 [lib]
 name = "crypto_core_rs"
-crate-type = ["cdylib", "rlib"]
+crate-type = ["rlib"]
 
 [dependencies]
-pyo3 = { version = "0.24", features = ["extension-module"] }
 aes-gcm = "0.10"
 argon2 = "0.5"
 sha2 = "0.10"
