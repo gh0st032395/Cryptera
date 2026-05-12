@@ -1,161 +1,288 @@
-# CryptoV2
+# Cryptera
 
-![Python](https://img.shields.io/badge/python-3.11%2B-blue)
-![License](https://img.shields.io/badge/license-MIT-green)
-![Security](https://img.shields.io/badge/crypto-AES--256--GCM-brightgreen)
+**Cryptera** è un'applicazione desktop per la cifratura locale di file e cartelle,
+costruita su un core crittografico in Rust e un'interfaccia grafica Tauri + Web.
 
-Applicazione desktop per la **cifratura sicura di file e cartelle**, con interfaccia grafica moderna e algoritmi crittografici di livello professionale.
+> Nessun cloud. Nessun servizio esterno. I dati rimangono esclusivamente sul dispositivo.
 
 ---
 
-## Caratteristiche principali
+## Indice
 
-- **AES-256-GCM** — cifratura autenticata con chiave a 256 bit
-- **Argon2id** — derivazione della chiave resistente ad attacchi GPU/ASIC
-- **Reed-Solomon FEC** — correzione errori che permette il recupero dati anche su file corrotti
-- **Header ridondante** — copia dell'intestazione in fondo al file per il recupero in caso di corruzione parziale
-- **Compressione opzionale** — zlib o lzma prima della cifratura
-- **Keyfile** — autenticazione a due fattori (password + file segreto)
-- **Drag & Drop** — trascina file o cartelle direttamente sulla finestra
-- **Batch Decrypt** — decifra più file `.ecf` in una sola operazione
-- **Verifica Integrità** — controlla l'autenticità senza decifrar il contenuto
-- **Storico Operazioni** — registro delle ultime operazioni nella sessione corrente
-- **Dark / Light Mode** — tema adattabile alle preferenze dell'utente
-- **Indicatore forza password** — feedback in tempo reale sulla robustezza della password
-- **System Tray** — minimizza nell'area di notifica e rimane disponibile in background
+1. [Caratteristiche](#caratteristiche)
+2. [Stack tecnologico](#stack-tecnologico)
+3. [Requisiti](#requisiti)
+4. [Build e avvio](#build-e-avvio)
+5. [Utilizzo](#utilizzo)
+6. [Profili di sicurezza e integrità](#profili-di-sicurezza-e-integrità)
+7. [Formato dei file `.ecf`](#formato-dei-file-ecf)
+8. [Struttura del progetto](#struttura-del-progetto)
+9. [Versionamento](#versionamento)
+10. [Sicurezza](#sicurezza)
+11. [Licenza](#licenza)
+
+---
+
+## Caratteristiche
+
+| Funzionalità | Dettagli |
+|---|---|
+| **Cifratura** | File singoli e cartelle intere (archivio TAR automatico) |
+| **Algoritmo** | AES-256-GCM — cifratura autenticata AEAD |
+| **KDF** | Argon2id — resistente ad attacchi GPU e side-channel |
+| **FEC** | Reed-Solomon su GF(256) — recupero da corruzione fisica |
+| **Compressione** | Pre-cifratura: zlib / LZMA2; archivi: gzip / bzip2 / xz |
+| **Verifica integrità** | Senza decifrare l'output — solo lettura e autenticazione GCM |
+| **Batch Decrypt** | Decifratura multipla con unica password e stato per-file |
+| **Audit Log** | Log JSONL persistente di tutte le operazioni (locale) |
+| **Storico** | Ring-buffer in memoria degli ultimi 100 eventi (volatile) |
+| **Tema** | Dark / Light / System — persisto in `localStorage` |
+| **System Tray** | Chiusura → hide to tray; ripristino con doppio click o menu |
+| **Internazionalizzazione** | Italiano e Inglese, selezionabili a runtime |
+| **Drag & Drop** | File e cartelle trascinabili direttamente nei pannelli |
+
+---
+
+## Stack tecnologico
+
+```
+┌──────────────────────────────────────────────────────────┐
+│   Frontend  (ui/)                                        │
+│   HTML + CSS (custom properties) + ES Modules (no build) │
+│   i18n bilingue EN/IT · Tema dark/light/system           │
+├──────────────────────────────────────────────────────────┤
+│   Bridge  (Tauri v2 IPC)                                 │
+│   Tauri commands · Events (progress/status) · Dialog API │
+├──────────────────────────────────────────────────────────┤
+│   Backend  (src-tauri/)                                  │
+│   Rust 2021 · tauri v2.5 · secrecy · serde_json         │
+│   Tray icon · Audit JSONL · ControlFlags (cancel/pause)  │
+├──────────────────────────────────────────────────────────┤
+│   Crypto Core  (src/ — crypto_core_rs)                   │
+│   AES-256-GCM · Argon2id · Reed-Solomon · Header v4      │
+└──────────────────────────────────────────────────────────┘
+```
 
 ---
 
 ## Requisiti
 
-- Python 3.11+
-- Dipendenze elencate in `requirements.txt`
+| Componente | Versione minima |
+|---|---|
+| Rust toolchain | 1.77+ (edition 2021) |
+| Tauri CLI | 2.x (`cargo install tauri-cli`) |
+| Node.js | Non richiesto — frontend è HTML/JS puro, nessun bundler |
+| Sistema operativo | Windows 10+, macOS 12+, Linux (GTK 3) |
+
+> Su Linux, assicurarsi di avere installato i pacchetti di sistema per Tauri/WebKit:
+> `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `libayatana-appindicator3-dev`
 
 ---
 
-## Installazione
+## Build e avvio
+
+### Sviluppo (hot-reload)
 
 ```bash
-# Clona il repository
-git clone https://github.com/tuo-username/cryptov2.git
-cd cryptov2
+# dalla root del repository
+cargo tauri dev
+```
 
-# Installa le dipendenze
-pip install -r requirements.txt
+### Build di produzione
 
-# Avvia l'applicazione
-python main_gui.py
+```bash
+cargo tauri build
+# gli installer si trovano in: src-tauri/target/release/bundle/
+```
+
+### Solo il core crittografico (test)
+
+```bash
+cargo test                        # test core
+cargo test --manifest-path src-tauri/Cargo.toml  # test Tauri backend
+```
+
+### Verifica versioni
+
+```bash
+# controlla che VERSION, Cargo.toml, src-tauri/Cargo.toml e tauri.conf.json siano allineate
+pwsh ./scripts/check-version.ps1
 ```
 
 ---
 
 ## Utilizzo
 
-### Cifratura file singolo
+### Cifratura
 
-1. Tab **Encrypt** → seleziona un file (o trascinalo sulla finestra)
-2. Scegli un profilo di sicurezza (Standard / Strong / Paranoid)
-3. Scegli un profilo di integrità (Low / Medium / High / Max)
-4. Opzionale: abilita keyfile per l'autenticazione a due fattori
-5. Clicca **Encrypt File** e inserisci la password
+1. Selezionare la modalità **File** o **Cartella** nel tab *Encrypt*.
+2. Scegliere sorgente, destinazione, password e profili.
+3. Click **Start Encryption**.
 
-### Cifratura cartella
-
-1. Tab **Encrypt** → seleziona una cartella
-2. La cartella viene archiviata come TAR e poi cifrata
-3. La password di un file cifrato è richiesta al momento dell'operazione
+Il file di output ha estensione `.ecf`. Il file originale non viene rimosso.
 
 ### Decifratura
 
-1. Tab **Decrypt** → seleziona il file `.ecf`
-2. Clicca **Decrypt to File** per ottenere il file originale
-3. Clicca **Decrypt & Extract** per estrarre direttamente una cartella cifrata
+1. Selezionare il file `.ecf` nel tab *Decrypt*.
+2. Inserire la password (e il keyfile, se usato in fase di cifratura).
+3. Scegliere la cartella di destinazione.
+4. Click **Start Decryption**.
+
+I metadati (tipo, dimensioni, profilo FEC) vengono mostrati automaticamente al
+caricamento del file.
+
+### Verifica integrità
+
+Il tab *Verify* autentica l'header e tutti gli shard GCM senza scrivere output.
+Mostra:
+- ✓/✗ stato integrità
+- Configurazione k/r Reed-Solomon
+- Overhead FEC percentuale
+- Dimensione del plaintext
 
 ### Batch Decrypt
 
-1. Tab **Batch** → aggiungi più file `.ecf`
-2. Clicca **Avvia Batch Decrypt** e inserisci la password una sola volta
-3. A fine operazione viene mostrato il riepilogo (successi / errori)
+Nel tab *Batch*:
+1. Aggiungere uno o più file `.ecf` (o trascinarli).
+2. Inserire la password comune.
+3. Click **Start Batch Decrypt**.
 
-### Verifica Integrità
+Ogni file viene elaborato in sequenza; lo stato (OK / ERR) è visibile per-file
+in tempo reale.
 
-1. Tab **Decrypt** → seleziona il file `.ecf`
-2. Clicca **Verifica Integrità**: controlla header, tag GCM e CRC senza scrivere output
-3. Il risultato mostra lo stato del file e i parametri crittografici usati
+### Audit Log
 
----
+Il tab *Audit* mostra il log JSONL persistente.
+Percorso predefinito:
+- **Windows**: `%APPDATA%\Cryptera\logs\audit.jsonl`
+- **Linux / macOS**: `~/.local/share/cryptera/logs/audit.jsonl`
 
-## Profili di sicurezza (Argon2id)
+Ogni voce contiene: timestamp UTC, operazione, file, dimensione, durata, stato.
 
-| Profilo  | t (iterazioni) | Memoria | Parallelismo | Uso consigliato |
-|----------|:--------------:|:-------:|:------------:|-----------------|
-| Standard | 3              | 64 MiB  | 2            | Uso quotidiano  |
-| Strong   | 6              | 256 MiB | 4            | Dati sensibili  |
-| Paranoid | 10             | 512 MiB | 8            | Massima sicurezza |
+### System Tray
 
-## Profili di integrità (Reed-Solomon)
-
-| Profilo | k  | r  | Overhead | Shards recuperabili |
-|---------|:--:|:--:|:--------:|---------------------|
-| Low     | 28 | 4  | ~14%     | 4 per blocco        |
-| Medium  | 24 | 8  | ~33%     | 8 per blocco        |
-| High    | 12 | 12 | ~100%    | 12 per blocco       |
-| Max     | 8  | 24 | ~300%    | 24 per blocco       |
+Cliccando **×** la finestra si nasconde nel system tray.
+Doppio click sull'icona tray (o menu contestuale → *Open Cryptera*) ripristina la
+finestra. Per chiudere definitivamente: menu tray → **Quit**.
 
 ---
 
-## Formato file `.ecf`
+## Profili di sicurezza e integrità
+
+### Profili Argon2id (KDF)
+
+| Profilo | Iterazioni | Memoria | Parallelismo | Uso consigliato |
+|---|---|---|---|---|
+| **Standard** | 3 | 64 MB | 2 | Uso quotidiano (default) |
+| **Strong** | 6 | 256 MB | 4 | File sensibili |
+| **Paranoid** | 10 | 512 MB | 8 | Massima protezione, più lento |
+
+### Profili Reed-Solomon (FEC)
+
+| Profilo | Dati (k) | Parità (r) | Overhead | Recuperabile fino a |
+|---|---|---|---|---|
+| **Low** | 28 | 4 | ~14% | 12% corruzione |
+| **Medium** | 24 | 8 | ~33% | 25% corruzione (default) |
+| **High** | 12 | 12 | ~100% | 50% corruzione |
+| **Max** | 8 | 24 | ~300% | 75% corruzione |
+
+---
+
+## Formato dei file `.ecf`
+
+I file cifrati usano il formato header v4 (proprietario):
 
 ```
-[HEADER]   — magic, parametri KDF, salt, nonce_base, k/r, versione, nome file
-[PWCHK]    — (opzionale) record per verifica rapida password errata
-[BLOCCHI]  — (k+r) shard per blocco, ciascuno AES-256-GCM
-[TRAILER]  — copia dell'header per recupero in caso di corruzione
+┌─────────────────────────────────────────────────────┐
+│  Magic + Version (4 bytes)                          │
+│  Salt Argon2id (16 bytes)                           │
+│  Argon2 params (t, m, p)                            │
+│  Flags (compressione, container, hide-filename, ...) │
+│  Filename originale (opzionale, cifrato in header)  │
+│  Password check record (opzionale, HMAC del salt)   │
+│  N shard cifrati (AES-256-GCM)                      │
+│    → ognuno con nonce 12b + tag 16b + CRC32         │
+│  R shard di parità Reed-Solomon                     │
+└─────────────────────────────────────────────────────┘
 ```
 
----
-
-## Garanzie di sicurezza
-
-| Proprietà          | Meccanismo                                      |
-|--------------------|-------------------------------------------------|
-| Confidenzialità    | AES-256-GCM (keyspace 2²⁵⁶)                   |
-| Integrità          | Tag GCM (128 bit) + CRC duplicato per shard    |
-| Autenticazione     | Argon2id con salt casuale a 128 bit             |
-| Robustezza fisica  | Reed-Solomon FEC configurabile                  |
-| Atomicità scrittura| `os.replace()` — nessun file parziale in caso di crash |
-
-**Fuori scope:** attacchi side-channel, forward secrecy, privacy metadati (dimensione e parametri sono visibili nell'header).
+L'header è incluso come **AAD** in ogni operazione GCM: qualsiasi modifica
+all'header invalida l'autenticazione. Non esiste modalità "solo cifratura senza
+autenticazione".
 
 ---
 
-## Test
-
-```bash
-# Suite completa
-pytest tests/ -v
-
-# Con report copertura
-pytest tests/ -v --cov=crypto_core --cov-report=term-missing
-```
-
----
-
-## Struttura progetto
+## Struttura del progetto
 
 ```
 cryptov2/
-├── crypto_core/          # Libreria crittografica
-│   ├── __init__.py       # API pubblica: encrypt_file, decrypt_file, decrypt_file_ex, verify_file
-│   ├── cipher.py         # Logica principale cifratura/decifratura
-│   ├── constants.py      # Costanti, profili, codici errore
-│   ├── galois.py         # Aritmetica GF(256) e Reed-Solomon
-│   └── header.py         # Serializzazione header file
-├── main_gui.py           # Applicazione desktop (CustomTkinter)
-├── tests/
-│   ├── test_crypto.py    # Test unitari e di integrazione
-│   ├── test_fuzzing.py   # Test fuzzing e casi limite
-│   └── test_large_files.py # Test su file di grandi dimensioni
-├── requirements.txt
-└── README.md
+├── src/                    # Crypto core (lib crate: crypto_core_rs)
+│   └── lib.rs              # AES-GCM, Argon2id, Reed-Solomon, header v4
+├── src-tauri/              # Tauri backend (bin crate: crypto_tauri)
+│   ├── src/
+│   │   ├── main.rs         # Tauri commands, AppState, AuditState, system tray
+│   │   └── audit.rs        # JSONL audit logger
+│   ├── capabilities/
+│   │   └── default.json    # Tauri permission capabilities
+│   └── tauri.conf.json     # App config (nome, finestra, bundle)
+├── ui/                     # Frontend (HTML + CSS + ES Modules, nessun build step)
+│   ├── index.html          # Layout principale, tutti i pannelli
+│   ├── styles.css          # Design system con CSS variables dark/light
+│   ├── app.js              # Logica UI, handlers, theme, history, batch, audit
+│   ├── loader.js           # Entry point (import dinamico di app.js)
+│   └── modules/
+│       ├── i18n.js         # Traduzioni EN / IT
+│       ├── tauri-bridge.js # Wrapper invoke/event/dialog/window
+│       └── ui-state.js     # Stato condiviso (busy, progress, meta render)
+├── fuzz/                   # Fuzzing harness (cargo-fuzz)
+├── tests/                  # Test di regressione crittografica
+├── scripts/
+│   └── check-version.ps1   # Verifica allineamento versioni
+├── VERSION                 # Fonte ufficiale della versione
+├── CHANGELOG.md
+├── SECURITY.md             # Threat model, primitive crittografiche
+└── RELEASE.md              # Procedura di rilascio
 ```
+
+---
+
+## Versionamento
+
+Il progetto usa **Semantic Versioning** (`MAJOR.MINOR.PATCH`):
+
+| Tipo di cambiamento | Bump |
+|---|---|
+| Breaking change al formato `.ecf` o alle API | MAJOR |
+| Nuova funzionalità retrocompatibile | MINOR |
+| Bug fix, refactoring, aggiornamenti dipendenze | PATCH |
+
+La versione corrente è definita in `VERSION` e **deve essere identica** in:
+- `VERSION`
+- `Cargo.toml` (crypto_core_rs)
+- `src-tauri/Cargo.toml`
+- `src-tauri/tauri.conf.json`
+
+Per verificare l'allineamento:
+
+```powershell
+pwsh ./scripts/check-version.ps1
+```
+
+Per rilasciare una nuova versione, seguire la procedura in [`RELEASE.md`](RELEASE.md).
+
+---
+
+## Sicurezza
+
+Per il dettaglio delle primitive crittografiche, garanzie di sicurezza, threat
+model e vulnerabilità note, consultare [`SECURITY.md`](SECURITY.md).
+
+**Segnalazione vulnerabilità**: aprire una issue privata o contattare il
+maintainer direttamente. Non pubblicare vulnerabilità come issue pubbliche.
+
+---
+
+## Licenza
+
+Dual license **MIT OR Apache-2.0** — vedere i file `LICENSE-MIT` e
+`LICENSE-APACHE` (o `license = "MIT OR Apache-2.0"` nei file `Cargo.toml`).

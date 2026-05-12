@@ -1,8 +1,11 @@
-# Security Documentation
+# Security Documentation — Cryptera v1.1
 
 ## Overview
 
-CryptoV2 is a file encryption tool providing confidentiality, integrity, and corruption resistance through modern cryptographic primitives and error correction codes.
+Cryptera is a local-only desktop encryption tool providing confidentiality, integrity, and
+corruption resistance through modern cryptographic primitives and error correction codes.
+The application is built in Rust (crypto core + Tauri backend) with a pure HTML/JS frontend.
+No network connections are made; all cryptographic operations run on-device.
 
 ---
 
@@ -29,9 +32,9 @@ CryptoV2 is a file encryption tool providing confidentiality, integrity, and cor
 
 ### Integrity: CRC32 + GCM Authentication
 
-- **Per-Shard CRC**: CRC32 with 2x redundancy for fast corruption detection
-- **GCM Tags**: 128-bit authentication tag per encrypted shard
-- **Header HMAC**: Authenticated data in GCM includes header metadata
+- **Per-Shard CRC**: CRC32 with 2x redundancy for fast hardware-friendly corruption detection.
+- **GCM Tags**: 128-bit authentication tag per encrypted shard.
+- **Header Authentication**: Header metadata is included as **AAD** (Associated Authenticated Data) in every GCM operation, ensuring its integrity without a separate HMAC.
 
 ### Error Correction: Reed-Solomon (GF(256))
 
@@ -61,7 +64,59 @@ CryptoV2 is a file encryption tool providing confidentiality, integrity, and cor
 - **KDF Strength**: Argon2id work factor configurable (default: 3 iterations, 64MB RAM)
 - **Salt Uniqueness**: Random 128-bit salt per file
 - **Dictionary Resistance**: Memory-hard function resists GPU/ASIC attacks
-- **Optional Keyfile**: HMAC-SHA256 combination of password + keyfile
+- **Optional Keyfile**: Two-factor protection combining password and keyfile.
+- **Keyfile Construction**: `HMAC-SHA256(key=SHA256(keyfile), msg=password)`. This prevents entropy loss and ensures even huge keyfiles are processed safely (via streaming hash).
+
+---
+
+## Keyfile Threat Model
+
+### What a keyfile provides
+
+A keyfile adds a **possession factor** to the password's knowledge factor. An attacker
+who steals the encrypted file and learns the password (e.g., via keylogger) still cannot
+decrypt without the keyfile. Conversely, an attacker who steals the keyfile but not the
+password gains nothing.
+
+### Construction detail
+
+```
+kf_hash   = SHA-256(keyfile_bytes)   // streamed in 64 KiB chunks
+secret    = HMAC-SHA256(key=kf_hash, msg=password_utf8)
+master_key = Argon2id(password=secret, salt=file_salt, …)
+```
+
+HMAC is used (not simple concatenation) so that:
+- Very large keyfiles are processed in constant output size (no entropy dilution).
+- The password and keyfile contribute independently: a weak password is not rescued
+  by a strong keyfile, but a strong keyfile raises the bar even for a weak password.
+
+### Minimum keyfile requirements
+
+| Property | Recommendation |
+|----------|----------------|
+| **Entropy** | ≥ 128 bits true randomness (e.g., 16 bytes from `/dev/urandom`) |
+| **Format** | Any file: binary blob, text, image, certificate, etc. |
+| **Size** | Any size; 32–256 bytes is practical |
+| **Storage** | Different physical medium from the encrypted file (e.g., USB key) |
+| **Backup** | Must be backed up; loss of keyfile = permanent loss of access |
+
+### ⚠️ Threats NOT mitigated by keyfile
+
+| Threat | Status |
+|--------|--------|
+| Attacker has BOTH password AND keyfile | **Not protected** (by definition) |
+| Keyfile on same disk as encrypted file | **Provides no isolation benefit** |
+| File-system forensics recovering deleted keyfile | **Not protected** |
+| Attacker with live system access (RAM dump) | **Not protected** |
+
+### Keyfile storage best practices
+
+1. Store the keyfile on a hardware token (USB, smart card) separate from the host.
+2. Never store the keyfile in the same directory or backup set as the `.ecf` files.
+3. For archival use, store an encrypted copy of the keyfile in a password manager.
+
+---
 
 ### ✅ Corruption Resistance
 
@@ -89,7 +144,9 @@ nonce (96 bits total) = nonce_base (32 bits) || block_index (32 bits) || shard_i
 
 - Each file has unique random `nonce_base` (2^32 space)
 - Each (key, nonce) pair used exactly once per file
-- Maximum file size: 2^32 blocks × block_size ≈ 281 TB @ default settings
+- **Maximum file size**: ~1.5 PiB (1536 TiB)
+    - Calculated as: $2^{32}$ blocks × $(k \times shard\_size)$.
+    - With default $k=24$ and $shard\_size=16$ KiB, block size is 384 KiB.
 - **Guarantee**: No nonce reuse within a single file
 - **Guarantee**: Statistically negligible collision across files (different salts → different keys)
 
@@ -97,18 +154,71 @@ nonce (96 bits total) = nonce_base (32 bits) || block_index (32 bits) || shard_i
 
 ## Privacy Considerations
 
+### Audit Log Privacy
+
+Cryptera writes a persistent JSONL audit log of every encrypt / decrypt / verify
+operation. **This log may contain sensitive information** and is stored unencrypted.
+
+**Default log paths:**
+- **Windows:** `%APPDATA%\Cryptera\logs\audit.jsonl`
+- **Linux / macOS:** `~/.local/share/cryptera/logs/audit.jsonl`
+
+**Data written per entry:**
+
+| Field     | Content                                  | Privacy Impact |
+|-----------|------------------------------------------|----------------|
+| `ts`      | UTC Unix timestamp (seconds)             | Reveals usage timing |
+| `op`      | Operation type (encrypt/decrypt/verify)  | Low |
+| `file`    | **Full filesystem path of the source file** | **⚠ Reveals file names and paths** |
+| `size_mb` | File size in MB                          | Reveals approximate original file size |
+| `duration_s` | Processing time in seconds            | Low |
+| `status`  | "ok" or "error"                          | Low |
+| `error`   | Error message if failed                  | May reveal partial file content |
+
+> **⚠️ Privacy Warning:** The audit log records the full paths of every file
+> you encrypt or decrypt. Anyone with read access to the log file (other users,
+> backup services, forensic tools) can reconstruct a history of your file operations
+> even if the encrypted files themselves are protected.
+
+**Mitigation options:**
+- Use **Clear Log** in the Audit tab to wipe the log when not needed.
+- Restrict filesystem permissions on `%APPDATA%\Cryptera\logs\` to your user only.
+- Encrypt the `Cryptera` AppData directory with OS-level full-disk encryption (BitLocker, FileVault, LUKS).
+- Consider disabling the audit log for sensitive sessions (planned feature).
+
+**Future hardening (roadmap):**
+- Option to hash/anonymize file paths in log entries.
+- Option to disable audit logging entirely from settings.
+- Log encryption with app-local key.
+
+---
+
 ### Metadata Visibility
 
 **The following metadata is stored IN CLEAR in the file header:**
 
 | Field | Purpose | Privacy Impact |
 |-------|---------|----------------|
-| Version | File format version | None |
+| Version | File format version (V3+) | None |
 | Encryption params | k, r, shard_size | Reveals integrity profile choice |
 | KDF params | Argon2 t/m/p | Reveals security profile choice |
-| File size | Original plaintext size | **Reveals file size** |
+| Plain size (V3) | Original plaintext size (pre-comp) | **Reveals original size** |
+| Stored size (V3) | Compressed size (post-comp) | Reveals compression efficiency |
 | Compression flag | zlib/lzma/none | Reveals compression choice |
-| Filename (V2) | Original filename | **Optional - can be hidden** |
+| Filename (V2+) | Original filename | **Optional (Flag-based in V3)** |
+
+### Evolution Strategy
+
+1. **Versioning**:
+   - **Version 3 (Current)**: Supports dual size fields and flag-based metadata.
+   - **Major changes** (e.g. new algorithms, header layout change) increment VERSION.
+2. **Extensions (Future)**:
+   - For optional metadata, use the area after the primary fields.
+   - Prefer adding flags to `flags` byte before blindly appending data.
+   - Readers should check VERSION; V3 readers can fall back to reading V1/V2 by assuming `plain_size == stored_size`.
+
+### DoS Protection (V3+)
+- **Decompression Limit**: Encrypted files now store `Plain Size`. The decompressor strictly enforces this limit to prevent "Decompression Bomb" attacks. Decrypt builds will fail if they attempt to write more than the expected plaintext size.
 
 **Mitigation:**
 - Use "Hide original filename" checkbox for privacy
@@ -166,11 +276,13 @@ nonce (96 bits total) = nonce_base (32 bits) || block_index (32 bits) || shard_i
 
 ### For Developers
 
-1. **Review Dependencies**: Audit `pycryptodome`, `argon2-cffi` versions
-2. **Test Coverage**: Run full test suite before deployment
-3. **Entropy Source**: Ensure OS provides quality randomness (`os.urandom`)
-4. **Memory Safety**: Be aware of potential memory limits with large files + high integrity settings
-5. **Error Handling**: Always check return codes from `decrypt_file_ex`
+1. **Dependency audit**: Run `cargo audit` and `cargo deny check` before releases
+2. **Test coverage**: `cargo test --all-features` (core) + `cargo test` in `src-tauri/`
+3. **Entropy source**: All randomness via `rand::rngs::OsRng` (OS CSPRNG)
+4. **Memory safety**: Rust ownership prevents buffer overflows; secrets use `secrecy::Secret` + `zeroize`
+5. **Error handling**: All Tauri commands return `Result<T, String>`; never `.unwrap()` in command handlers
+6. **Key zeroization**: `Zeroizing<Vec<u8>>` is used for all derived key material
+7. **Clippy gates**: CI enforces `-D warnings`; no unsafe code outside explicitly reviewed sections
 
 ---
 
@@ -213,17 +325,31 @@ If you suspect a security vulnerability:
 
 ## Changelog
 
-### V2 (Current)
-- Added optional filename metadata
-- Enhanced TAR security (hardlink/special file filtering)
-- Improved error messages (TRUNCATED detection)
-- Default FEC Medium (24/8) instead of High (12/12)
+### App v1.1.0 / Header v4 (current)
+- Header Authentication Tag: HMAC binding between key and header (anti-tampering).
+- `stored_size` field: accurate decompression limit enforcement.
+- LZMA2 compression flag.
+- TAR container flag for folder encryption.
+- Keyfile HMAC construction (replaces naive concatenation).
+- Audit JSONL log with per-operation entries.
+- Persistent system tray.
 
-### V1 (Legacy)
-- Initial implementation
-- AES-256-GCM + Argon2id + Reed-Solomon
-- Header redundancy
-- PWCHK optional record
+### App v1.0.0 / Header v4 (initial)
+- Full Rust rewrite of the crypto core.
+- AES-256-GCM + Argon2id + Reed-Solomon in Rust (`crypto_core_rs` crate).
+- Tauri v2 GUI (`crypto_tauri` crate).
+- Header v4 format with PWCHK optional record and header redundancy.
+- Automated crypto regression tests and fuzzing harness.
+
+### Header v3 (legacy Python era)
+- Dual size tracking (Plain vs Stored) for accurate compression handling.
+- Enforcement of decompression limits (anti-DoS).
+- Enhanced privacy: explicit flag for filename metadata.
+- Secure TAR extraction (manual walk, strict permissions).
+
+### Header v1 / v2 (legacy)
+- v2: Optional filename metadata; PWCHK record.
+- v1: Initial format — AES-256-GCM + Argon2id + Reed-Solomon + header redundancy.
 
 ---
 

@@ -1,0 +1,519 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cryptera</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+
+<body>
+  <div data-tauri-drag-region class="titlebar">
+    <div class="titlebar-logo">
+      <div class="logo-icon-sm"></div>
+      <span>Cryptera</span>
+    </div>
+    <div class="titlebar-controls">
+      <button class="theme-toggle-btn" id="themeToggleBtn" title="Toggle theme" aria-label="Toggle theme">
+        <!-- icon set by JS -->
+        <svg id="themeIcon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+        </svg>
+      </button>
+      <div class="titlebar-button" id="titlebar-minimize">
+        <svg width="10" height="1" viewBox="0 0 10 1">
+          <path d="M0 0h10v1H0z" />
+        </svg>
+      </div>
+      <div class="titlebar-button" id="titlebar-maximize">
+        <svg width="10" height="10" viewBox="0 0 10 10">
+          <path d="M1,1v8h8V1H1z M0,0h10v10H0V0z" />
+        </svg>
+      </div>
+      <div class="titlebar-button close" id="titlebar-close">
+        <svg width="10" height="10" viewBox="0 0 10 10">
+          <path d="M1,0L0,1L4,5L0,9L1,10L5,6L9,10L10,9L6,5L10,1L9,0L5,4L1,0z" />
+        </svg>
+      </div>
+    </div>
+  </div>
+
+  <div class="app-layout">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="logo">C2</div>
+        <div class="brand-text">
+          <span class="title">Cryptera</span>
+          <span class="subtitle">Local Encryption</span>
+        </div>
+      </div>
+      <nav class="nav">
+        <button class="nav-item active" data-tab="encrypt" data-i18n="nav_encrypt" role="tab" aria-selected="true"
+          aria-controls="panel-encrypt">Encrypt</button>
+        <button class="nav-item" data-tab="decrypt" data-i18n="nav_decrypt" role="tab" aria-selected="false"
+          aria-controls="panel-decrypt">Decrypt</button>
+        <button class="nav-item" data-tab="verify" data-i18n="nav_verify" role="tab" aria-selected="false"
+          aria-controls="panel-verify">Verify</button>
+        <button class="nav-item" data-tab="batch" data-i18n="nav_batch" role="tab" aria-selected="false"
+          aria-controls="panel-batch">Batch</button>
+        <button class="nav-item" data-tab="history" data-i18n="nav_history" role="tab" aria-selected="false"
+          aria-controls="panel-history">History</button>
+        <button class="nav-item" data-tab="audit" data-i18n="nav_audit" role="tab" aria-selected="false"
+          aria-controls="panel-audit">Audit</button>
+        <button class="nav-item" data-tab="about" data-i18n="nav_about" role="tab" aria-selected="false"
+          aria-controls="panel-about">About</button>
+      </nav>
+      <div class="status-card">
+        <div class="status-label">Status</div>
+        <div id="statusText" class="status-text">Booting...</div>
+        <div class="progress">
+          <div class="progress-track">
+            <div id="progressFill" class="progress-fill"></div>
+          </div>
+          <div id="progressValue" class="progress-value">0%</div>
+        </div>
+        <div class="control-row">
+          <button id="pauseBtn" class="ghost">Pause</button>
+          <button id="cancelBtn" class="ghost danger">Cancel</button>
+          <button id="resetBtn" class="ghost">Reset</button>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <section class="hero">
+        <div>
+          <h1 data-i18n="hero_title">Secure files, fast workflows.</h1>
+          <p data-i18n="hero_subtitle">Offline encryption with Rust core. Clean UI, precise control.</p>
+        </div>
+        <div class="hero-card">
+          <div class="metric">
+            <span class="metric-label" data-i18n="metric_engine">Engine</span>
+            <span class="metric-value">Rust Core</span>
+          </div>
+          <div class="metric">
+            <span class="metric-label" data-i18n="metric_mode">Mode</span>
+            <span class="metric-value" data-i18n="metric_local">Local Only</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== ENCRYPT PANEL ===== -->
+      <section id="panel-encrypt" class="panel active">
+        <div class="panel-header">
+          <h2 data-i18n="panel_encrypt_title">Encrypt</h2>
+          <p data-i18n="panel_encrypt_desc">Protect a file or a folder with strong crypto defaults.</p>
+        </div>
+        <div class="panel-grid">
+          <div class="card">
+            <div class="card-title" data-i18n="card_source">Source</div>
+            <div class="segmented">
+              <button class="seg active" data-mode="file" data-i18n="seg_file">File</button>
+              <button class="seg" data-mode="folder" data-i18n="seg_folder">Folder</button>
+            </div>
+            <div class="field">
+              <label data-i18n="label_file_path">File path</label>
+              <div class="input-row">
+                <input id="encFile" type="text" placeholder="Select a file" />
+                <button id="encFileBtn" class="primary" data-i18n="btn_choose">Choose</button>
+              </div>
+            </div>
+            <div class="field">
+              <label data-i18n="label_folder_path">Folder path</label>
+              <div class="input-row">
+                <input id="encFolder" type="text" placeholder="Select a folder" />
+                <button id="encFolderBtn" class="primary" data-i18n="btn_choose">Choose</button>
+              </div>
+            </div>
+            <div class="field">
+              <label data-i18n="label_output_file">Output file</label>
+              <div class="input-row">
+                <input id="encOutput" type="text" placeholder="Select output" />
+                <button id="encOutputBtn" class="primary" data-i18n="btn_save_as">Save As</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title" data-i18n="card_security">Security</div>
+            <div class="field">
+              <label data-i18n="label_password">Password</label>
+              <input id="encPassword" type="password" placeholder="Required" />
+              <div class="password-meter">
+                <div class="password-meter-track">
+                  <div id="encPasswordStrengthFill" class="password-meter-fill strength-0"></div>
+                </div>
+                <div id="encPasswordStrengthText" class="password-meter-text">Strength: very weak</div>
+                <div id="encPasswordFeedback" class="password-policy"></div>
+                <div id="encPasswordPolicy" class="password-policy" data-i18n="pwd_policy_encrypt">
+                  Encryption password policy: at least 10 chars and medium strength.
+                </div>
+              </div>
+            </div>
+            <div class="field">
+              <label data-i18n="label_keyfile">Keyfile (optional)</label>
+              <div class="input-row">
+                <input id="encKeyfile" type="text" placeholder="Select keyfile" />
+                <button id="encKeyfileBtn" class="primary" data-i18n="btn_choose">Choose</button>
+              </div>
+            </div>
+            <div class="field">
+              <label data-i18n="label_sec_profile">Security profile</label>
+              <div class="custom-select" id="encSecProfile-wrapper">
+                <input type="hidden" id="encSecProfile" value="Standard">
+                <div class="select-trigger" data-i18n="opt_standard" role="button" tabindex="0" aria-haspopup="listbox"
+                  aria-expanded="false">Standard</div>
+                <div class="select-options">
+                  <div class="option" data-value="Standard" data-i18n="opt_standard"
+                    data-i18n-tooltip="tooltip_sec_standard"
+                    data-tooltip="Argon2id: 3 passes, 64MB RAM. Balanced security (Default)." role="option"
+                    tabindex="0">Standard</div>
+                  <div class="option" data-value="Strong" data-i18n="opt_strong" data-i18n-tooltip="tooltip_sec_strong"
+                    data-tooltip="Argon2id: 6 passes, 256MB RAM. heavy protection against brute-force.">Strong</div>
+                  <div class="option" data-value="Paranoid" data-i18n="opt_paranoid"
+                    data-i18n-tooltip="tooltip_sec_paranoid"
+                    data-tooltip="Argon2id: 10 passes, 512MB RAM. Maximum security, slower encryption.">Paranoid</div>
+                </div>
+              </div>
+            </div>
+            <div class="field">
+              <label data-i18n="label_int_profile" data-i18n-tooltip="tooltip_int_profile"
+                data-tooltip="Determines how many recovery shards are generated for file redundancy.">Integrity
+                profile</label>
+              <div class="custom-select" id="encIntProfile-wrapper">
+                <input type="hidden" id="encIntProfile" value="Medium">
+                <div class="select-trigger" data-i18n="opt_medium">Medium</div>
+                <div class="select-options">
+                  <div class="option" data-value="Medium" data-i18n="opt_medium" data-i18n-tooltip="tooltip_int_medium"
+                    data-tooltip="24 Data / 8 Parity shards. Good balance.">Medium</div>
+                  <div class="option" data-value="Low" data-i18n="opt_low" data-i18n-tooltip="tooltip_int_low"
+                    data-tooltip="28 Data / 4 Parity shards. minimal overhead.">Low</div>
+                  <div class="option" data-value="High" data-i18n="opt_high" data-i18n-tooltip="tooltip_int_high"
+                    data-tooltip="12 Data / 12 Parity shards. High redundancy (50% overhead).">High</div>
+                  <div class="option" data-value="Max" data-i18n="opt_max" data-i18n-tooltip="tooltip_int_max"
+                    data-tooltip="8 Data / 24 Parity shards. Maximum redundancy (300% overhead).">Max</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-title" data-i18n="card_options">Options</div>
+            <div class="field">
+              <label data-i18n="label_file_comp" data-i18n-tooltip="tooltip_file_comp"
+                data-tooltip="Compresses the file before encryption to save space.">File compression</label>
+              <div class="custom-select" id="encFileComp-wrapper">
+                <input type="hidden" id="encFileComp" value="none">
+                <div class="select-trigger" data-i18n="opt_none" role="button" tabindex="0" aria-haspopup="listbox"
+                  aria-expanded="false">none</div>
+                <div class="select-options">
+                  <div class="option" data-value="none" data-i18n="opt_none" data-i18n-tooltip="tooltip_file_comp_none"
+                    data-tooltip="No compression. Fastest.">none</div>
+                  <div class="option" data-value="zlib" data-i18n="opt_zlib" data-i18n-tooltip="tooltip_file_comp_zlib"
+                    data-tooltip="DEFLATE compression. Good for documents.">zlib</div>
+                  <div class="option" data-value="lzma" data-i18n="opt_lzma" data-i18n-tooltip="tooltip_file_comp_lzma"
+                    data-tooltip="LZMA compression. Best ratio, slower.">lzma</div>
+                </div>
+              </div>
+            </div>
+            <div class="field">
+              <label data-i18n="label_folder_comp" data-i18n-tooltip="tooltip_folder_comp"
+                data-tooltip="Compresses the TAR archive when encrypting a folder.">Folder archive
+                compression</label>
+              <div class="custom-select" id="encFolderComp-wrapper">
+                <input type="hidden" id="encFolderComp" value="none">
+                <div class="select-trigger" data-i18n="opt_none">none</div>
+                <div class="select-options">
+                  <div class="option" data-value="none" data-i18n="opt_none"
+                    data-i18n-tooltip="tooltip_folder_comp_none" data-tooltip="No compression.">none</div>
+                  <div class="option" data-value="gz" data-i18n="opt_gz" data-i18n-tooltip="tooltip_folder_comp_gz"
+                    data-tooltip="Gzip. Fast and widely compatible.">gz</div>
+                  <div class="option" data-value="bz2" data-i18n="opt_bz2" data-i18n-tooltip="tooltip_folder_comp_bz2"
+                    data-tooltip="Bzip2. Better compression than Gzip.">bz2</div>
+                  <div class="option" data-value="xz" data-i18n="opt_xz" data-i18n-tooltip="tooltip_folder_comp_xz"
+                    data-tooltip="XZ/LZMA. Best compression, slower.">xz</div>
+                </div>
+              </div>
+            </div>
+            <div class="checkbox" data-i18n-tooltip="tooltip_skip_special"
+              data-tooltip="If checked, symbolic links and special device files will be detected and skipped to prevent errors.">
+              <input id="encSkipSpecial" type="checkbox" checked />
+              <label for="encSkipSpecial" data-i18n="check_skip_special">Skip symlinks and special entries</label>
+            </div>
+            <div class="checkbox" data-i18n-tooltip="tooltip_enable_pwchk"
+              data-tooltip="Adds a hashed check value to the header. Allows validating the password before attempting full decryption.">
+              <input id="encEnablePwchk" type="checkbox" checked />
+              <label for="encEnablePwchk" data-i18n="check_pwchk">Enable password check record</label>
+            </div>
+            <div class="checkbox" data-i18n-tooltip="tooltip_hide_filename"
+              data-tooltip="Stores the original filename inside the encrypted header, so the output file can have a random name.">
+              <input id="encHideFilename" type="checkbox" />
+              <label for="encHideFilename" data-i18n="check_hide_filename">Hide original filename</label>
+            </div>
+          </div>
+        </div>
+        <div class="panel-actions">
+          <button id="encryptBtn" class="cta" data-i18n="btn_start_enc">Start Encryption</button>
+        </div>
+      </section>
+
+      <!-- ===== DECRYPT PANEL ===== -->
+      <section id="panel-decrypt" class="panel">
+        <div class="panel-header">
+          <h2 data-i18n="panel_decrypt_title">Decrypt</h2>
+          <p data-i18n="panel_decrypt_desc">Recover files and optionally extract archived folders.</p>
+        </div>
+        <div class="panel-grid">
+          <div class="card">
+            <div class="card-title" data-i18n="card_source">Source</div>
+            <div class="field">
+              <label data-i18n="label_encrypted_file">Encrypted file</label>
+              <div class="input-row">
+                <input id="decFile" type="text" placeholder="Select a file" />
+                <button id="decFileBtn" class="primary" data-i18n="btn_choose">Choose</button>
+              </div>
+            </div>
+            <div class="field">
+              <label data-i18n="label_output_path">Output path</label>
+              <div class="input-row">
+                <input id="decOutput" type="text" placeholder="Folder or file" />
+                <button id="decOutputBtn" class="primary" data-i18n="btn_select">Select</button>
+              </div>
+            </div>
+            <div class="meta-box" id="metaBox">
+              <div class="meta-title" data-i18n="meta_title">Metadata</div>
+              <div id="metaContent" class="meta-content" data-i18n="meta_empty">No metadata loaded.</div>
+            </div>
+            <button id="readMetaBtn" class="secondary" data-i18n="btn_read_meta">Read Metadata</button>
+          </div>
+
+          <div class="card">
+            <div class="card-title" data-i18n="card_credentials">Credentials</div>
+            <div class="field">
+              <label data-i18n="label_password">Password</label>
+              <input id="decPassword" type="password" placeholder="Required" />
+              <div class="password-meter">
+                <div class="password-meter-track">
+                  <div id="decPasswordStrengthFill" class="password-meter-fill strength-0"></div>
+                </div>
+                <div id="decPasswordStrengthText" class="password-meter-text">Strength: very weak</div>
+              </div>
+            </div>
+            <div class="field">
+              <label data-i18n="label_keyfile">Keyfile (optional)</label>
+              <div class="input-row">
+                <input id="decKeyfile" type="text" placeholder="Select keyfile" />
+                <button id="decKeyfileBtn" class="primary" data-i18n="btn_choose">Choose</button>
+              </div>
+            </div>
+            <div class="checkbox">
+              <input id="decExtract" type="checkbox" checked />
+              <label for="decExtract" data-i18n="check_auto_extract">Auto extract TAR containers</label>
+            </div>
+            <div class="checkbox">
+              <input id="decKeepTar" type="checkbox" />
+              <label for="decKeepTar" data-i18n="check_keep_tar">Keep decrypted TAR</label>
+            </div>
+          </div>
+        </div>
+        <div class="panel-actions">
+          <button id="decryptBtn" class="cta" data-i18n="btn_start_dec">Start Decryption</button>
+        </div>
+      </section>
+
+      <!-- ===== VERIFY PANEL ===== -->
+      <section id="panel-verify" class="panel">
+        <div class="panel-header">
+          <h2 data-i18n="panel_verify_title">Verify</h2>
+          <p data-i18n="panel_verify_desc">Validate integrity without decrypting.</p>
+        </div>
+        <div class="panel-grid">
+          <div class="card">
+            <div class="card-title" data-i18n="card_target">Target</div>
+            <div class="field">
+              <label data-i18n="label_encrypted_file">Encrypted file</label>
+              <div class="input-row">
+                <input id="verFile" type="text" placeholder="Select a file" />
+                <button id="verFileBtn" class="primary" data-i18n="btn_choose">Choose</button>
+              </div>
+            </div>
+            <div class="meta-box" id="verMetaBox">
+              <div class="meta-title" data-i18n="meta_title">Metadata</div>
+              <div id="verMetaContent" class="meta-content" data-i18n="meta_empty">No metadata loaded.</div>
+            </div>
+            <button id="readVerifyMetaBtn" class="secondary" data-i18n="btn_read_meta">Read Metadata</button>
+          </div>
+          <div class="card">
+            <div class="card-title" data-i18n="card_credentials">Credentials</div>
+            <div class="field">
+              <label data-i18n="label_password">Password</label>
+              <input id="verPassword" type="password" placeholder="Required" />
+              <div class="password-meter">
+                <div class="password-meter-track">
+                  <div id="verPasswordStrengthFill" class="password-meter-fill strength-0"></div>
+                </div>
+                <div id="verPasswordStrengthText" class="password-meter-text">Strength: very weak</div>
+              </div>
+            </div>
+            <div class="field">
+              <label data-i18n="label_keyfile">Keyfile (optional)</label>
+              <div class="input-row">
+                <input id="verKeyfile" type="text" placeholder="Select keyfile" />
+                <button id="verKeyfileBtn" class="primary" data-i18n="btn_choose">Choose</button>
+              </div>
+            </div>
+            <!-- Verify result details (populated after successful verification) -->
+            <div id="verResultBox" class="meta-box" style="display:none;">
+              <div class="meta-title" data-i18n="ver_result_title">Verification Result</div>
+              <div id="verResultContent" class="meta-content"></div>
+            </div>
+          </div>
+        </div>
+        <div class="panel-actions">
+          <button id="verifyBtn" class="cta" data-i18n="btn_run_ver">Run Verification</button>
+        </div>
+      </section>
+
+      <!-- ===== BATCH DECRYPT PANEL ===== -->
+      <section id="panel-batch" class="panel">
+        <div class="panel-header">
+          <h2 data-i18n="panel_batch_title">Batch Decrypt</h2>
+          <p data-i18n="panel_batch_desc">Decrypt multiple .ecf files with a single password.</p>
+        </div>
+        <div class="panel-grid">
+          <div class="card">
+            <div class="card-title" data-i18n="card_batch_files">Files</div>
+            <div id="batchFileList" class="batch-file-list">
+              <div class="batch-empty" data-i18n="batch_empty">No files added. Click "Add Files" to begin.</div>
+            </div>
+            <div class="control-row" style="margin-top:16px;">
+              <button id="batchAddBtn" class="primary" data-i18n="btn_batch_add">Add Files</button>
+              <button id="batchRemoveBtn" class="ghost" data-i18n="btn_batch_remove">Remove Selected</button>
+              <button id="batchClearBtn" class="ghost danger" data-i18n="btn_batch_clear">Clear All</button>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title" data-i18n="card_credentials">Credentials</div>
+            <div class="field">
+              <label data-i18n="label_password">Password</label>
+              <input id="batchPassword" type="password" placeholder="Required" />
+            </div>
+            <div class="field">
+              <label data-i18n="label_keyfile">Keyfile (optional)</label>
+              <div class="input-row">
+                <input id="batchKeyfile" type="text" placeholder="Select keyfile" />
+                <button id="batchKeyfileBtn" class="primary" data-i18n="btn_choose">Choose</button>
+              </div>
+            </div>
+            <div class="field">
+              <label data-i18n="label_output_path">Output folder</label>
+              <div class="input-row">
+                <input id="batchOutputFolder" type="text" placeholder="Same as source (default)" />
+                <button id="batchOutputFolderBtn" class="primary" data-i18n="btn_select">Select</button>
+              </div>
+            </div>
+            <div class="checkbox">
+              <input id="batchExtract" type="checkbox" checked />
+              <label for="batchExtract" data-i18n="check_auto_extract">Auto extract TAR containers</label>
+            </div>
+            <!-- Batch summary (shown after completion) -->
+            <div id="batchSummaryBox" class="meta-box" style="display:none;">
+              <div class="meta-title" data-i18n="batch_summary_title">Batch Summary</div>
+              <div id="batchSummaryContent" class="meta-content"></div>
+            </div>
+          </div>
+        </div>
+        <div class="panel-actions">
+          <button id="batchDecryptBtn" class="cta" data-i18n="btn_batch_start">Start Batch Decrypt</button>
+        </div>
+      </section>
+
+      <!-- ===== HISTORY PANEL ===== -->
+      <section id="panel-history" class="panel">
+        <div class="panel-header">
+          <h2 data-i18n="panel_history_title">Operation History</h2>
+          <p data-i18n="panel_history_desc">In-memory log of recent operations (last 100). Cleared on exit.</p>
+        </div>
+        <div class="card wide">
+          <div id="historyList" class="history-list">
+            <div class="history-empty" data-i18n="history_empty">No operations yet.</div>
+          </div>
+        </div>
+        <div class="panel-actions">
+          <button id="clearHistoryBtn" class="ghost danger" data-i18n="btn_clear_history">Clear History</button>
+        </div>
+      </section>
+
+      <!-- ===== AUDIT LOG PANEL ===== -->
+      <section id="panel-audit" class="panel">
+        <div class="panel-header">
+          <h2 data-i18n="panel_audit_title">Audit Log</h2>
+          <p data-i18n="panel_audit_desc">Persistent JSONL log of all operations. Stored locally.</p>
+        </div>
+        <div class="card wide">
+          <div class="audit-table-wrap">
+            <table class="audit-table" id="auditTable">
+              <thead>
+                <tr>
+                  <th data-i18n="audit_col_ts">Timestamp</th>
+                  <th data-i18n="audit_col_op">Operation</th>
+                  <th data-i18n="audit_col_file">File</th>
+                  <th data-i18n="audit_col_size">Size</th>
+                  <th data-i18n="audit_col_duration">Duration</th>
+                  <th data-i18n="audit_col_status">Status</th>
+                </tr>
+              </thead>
+              <tbody id="auditTableBody">
+                <tr>
+                  <td colspan="6" class="audit-empty" data-i18n="audit_empty">No entries.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel-actions">
+          <button id="refreshAuditBtn" class="ghost" data-i18n="btn_audit_refresh">Refresh</button>
+          <button id="clearAuditBtn" class="ghost danger" data-i18n="btn_audit_clear">Clear Log</button>
+        </div>
+      </section>
+
+      <!-- ===== ABOUT PANEL ===== -->
+      <section id="panel-about" class="panel">
+        <div class="panel-header">
+          <h2 data-i18n="panel_about_title">About</h2>
+          <p data-i18n="panel_about_desc">Sicurezza locale, senza compromessi.</p>
+        </div>
+        <div class="card wide">
+          <div class="card-title">Cryptera</div>
+          <p data-i18n="about_text">
+            Cryptera e' un'app di cifratura locale basata su Rust. Usa AES-GCM e Argon2id con
+            codifica ridondante per integrita' e recupero. Nessun upload, nessun servizio esterno.
+          </p>
+          <div class="pill-row">
+            <span class="pill">AES-256-GCM</span>
+            <span class="pill">Argon2id</span>
+            <span class="pill">FEC</span>
+          </div>
+          <div class="mt-24">
+            <div class="field w-200">
+              <label data-i18n="label_language">Language</label>
+              <div class="custom-select" id="languageSelect-wrapper">
+                <input type="hidden" id="languageSelect" value="en">
+                <div class="select-trigger" role="button" tabindex="0" aria-haspopup="listbox" aria-expanded="false">
+                  English</div>
+                <div class="select-options">
+                  <div class="option" data-value="en">English</div>
+                  <div class="option" data-value="it">Italiano</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="./loader.js"></script>
+</body>
+
+</html>
