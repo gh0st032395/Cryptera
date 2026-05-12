@@ -857,6 +857,7 @@ fn main() {
     let audit_logger = audit::AuditLogger::new(log_dir);
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::default())
         .manage(AuditState {
