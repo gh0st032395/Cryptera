@@ -507,7 +507,7 @@ dependencies = [
 
 [[package]]
 name = "crypto_core_rs"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -525,7 +525,7 @@ dependencies = [
 
 [[package]]
 name = "crypto_tauri"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "bzip2",
  "crypto_core_rs",
