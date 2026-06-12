@@ -15,6 +15,7 @@ import {
   updateMode,
   renderMetaTo,
 } from "./modules/ui-state.js";
+import { escapeHtml } from "./modules/dom.js";
 
 // ── Element refs ──────────────────────────────────────────────────────────────
 let pauseBtn = null;
@@ -327,8 +328,8 @@ function renderHistory() {
     const dur = formatDuration(entry.durationMs);
     const ts = formatTimestamp(entry.ts);
     return `<div class="history-item">
-      <span class="hi-op">${opLabel}</span>
-      <span class="hi-file">${basename(entry.filename)}</span>
+      <span class="hi-op">${escapeHtml(opLabel)}</span>
+      <span class="hi-file">${escapeHtml(basename(entry.filename))}</span>
       <span class="${statusClass}">${statusText}</span>
       <span class="hi-time">${ts} · ${dur}</span>
     </div>`;
@@ -350,8 +351,8 @@ function showVerifyResult(success, meta) {
   box.style.display = "block";
   let html = `<div style="color:var(--accent);font-weight:600;margin-bottom:6px">✓ ${t("ver_result_ok")}</div>`;
   if (meta) {
-    html += `<div><strong>${t("ver_result_shards")}:</strong> ${meta.k} / ${meta.r}</div>`;
-    html += `<div><strong>${t("ver_result_plain_size")}:</strong> ${meta.plain_size} bytes</div>`;
+    html += `<div><strong>${t("ver_result_shards")}:</strong> ${escapeHtml(meta.k)} / ${escapeHtml(meta.r)}</div>`;
+    html += `<div><strong>${t("ver_result_plain_size")}:</strong> ${escapeHtml(meta.plain_size)} bytes</div>`;
     const fecPct = meta.r && (meta.k + meta.r) > 0
       ? Math.round((meta.r / (meta.k + meta.r)) * 100)
       : 0;
@@ -381,8 +382,8 @@ function renderBatchList() {
     else if (item.status === "running") { statusText = t("batch_status_running"); }
     const selected = idx === _batchSelectedIndex ? " style=\"border-color:var(--accent);\"" : "";
     return `<div class="batch-file-item" data-index="${idx}"${selected}>
-      <span class="bfi-name" title="${item.path}">${basename(item.path)}</span>
-      <span class="bfi-status ${statusClass}">${statusText}${item.error ? `: ${item.error}` : ""}</span>
+      <span class="bfi-name" title="${escapeHtml(item.path)}">${escapeHtml(basename(item.path))}</span>
+      <span class="bfi-status ${statusClass}">${escapeHtml(statusText)}${item.error ? `: ${escapeHtml(item.error)}` : ""}</span>
       <button class="bfi-remove" data-index="${idx}" aria-label="Remove">✕</button>
     </div>`;
   }).join("");
@@ -500,12 +501,12 @@ function renderAuditTable(entries) {
     const ts = e.ts ? new Date(e.ts).toLocaleString() : "—";
     const fileName = basename(e.file || "—");
     return `<tr>
-      <td>${ts}</td>
-      <td>${e.op || "—"}</td>
-      <td title="${e.file || ""}">${fileName}</td>
+      <td>${escapeHtml(ts)}</td>
+      <td>${escapeHtml(e.op || "—")}</td>
+      <td title="${escapeHtml(e.file || "")}">${escapeHtml(fileName)}</td>
       <td>${sizeMb}</td>
       <td>${dur}</td>
-      <td class="${statusClass}">${e.status || "—"}</td>
+      <td class="${statusClass}">${escapeHtml(e.status || "—")}</td>
     </tr>`;
   }).join("");
 }
@@ -519,7 +520,7 @@ async function loadAuditLog() {
     console.error("Failed to load audit log:", err);
     const tbody = document.getElementById("auditTableBody");
     if (tbody) {
-      tbody.innerHTML = `<tr><td colspan="6" class="audit-empty" style="color:#ff8b8b">${err}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="6" class="audit-empty" style="color:#ff8b8b">${escapeHtml(err)}</td></tr>`;
     }
   }
 }
