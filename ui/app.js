@@ -82,20 +82,42 @@ function normalizeErrorMessage(err) {
   return String(err || "").trim().toLowerCase();
 }
 
-function mapErrorToUserFeedback(action, err) {
-  const raw = normalizeErrorMessage(err);
+/**
+ * Human-readable text for an error of unknown shape (structured CmdError
+ * `{code, message}` from the backend, Error instance, or plain string).
+ */
+function errorToText(err) {
+  if (err && typeof err === "object") {
+    if (err.message) return String(err.message);
+    if (err.code) return String(err.code);
+  }
+  return String(err || "");
+}
 
-  if (raw.includes("password required")) return { message: t("err_password_required"), level: "warn" };
-  if (raw.includes("input file required") || raw.includes("input file or folder required")) return { message: t("err_input_required"), level: "warn" };
-  if (raw.includes("output path required")) return { message: t("err_output_required"), level: "warn" };
-  if (raw.includes("output file already exists")) return { message: t("err_output_exists"), level: "warn" };
-  if (raw.includes("wrong password") || raw.includes("password_invalid")) return { message: t("err_password_invalid"), level: "error" };
-  if (raw.includes("header authentication failed") || raw.includes("header_auth_failed")) return { message: t("err_header_auth"), level: "error" };
-  if (raw.includes("header not found") || raw.includes("header invalid") || raw.includes("invalid header") || raw.includes("unsupported version")) return { message: t("err_header_invalid"), level: "error" };
-  if (raw.includes("truncated") || raw.includes("unexpected eof")) return { message: t("err_file_truncated"), level: "error" };
-  if (raw.includes("corrupt_beyond_fec") || raw.includes("failed recovery")) return { message: t("err_corrupt_beyond_fec"), level: "error" };
-  if (raw.includes("cancelled")) return { message: t("err_cancelled"), level: "warn" };
-  if (raw.includes("state lock failed") || raw.includes("no active job")) return { message: t("err_internal_state"), level: "error" };
+// Stable backend/core error codes → i18n key + status level.
+const ERROR_CODE_FEEDBACK = {
+  PASSWORD_REQUIRED: { key: "err_password_required", level: "warn" },
+  INPUT_REQUIRED: { key: "err_input_required", level: "warn" },
+  OUTPUT_REQUIRED: { key: "err_output_required", level: "warn" },
+  OUTPUT_EXISTS: { key: "err_output_exists", level: "warn" },
+  PASSWORD_INVALID: { key: "err_password_invalid", level: "error" },
+  HEADER_AUTH_FAILED: { key: "err_header_auth", level: "error" },
+  HEADER_INVALID: { key: "err_header_invalid", level: "error" },
+  PARAMS_OUT_OF_LIMITS: { key: "err_header_invalid", level: "error" },
+  TRUNCATED: { key: "err_file_truncated", level: "error" },
+  CORRUPT_BEYOND_FEC: { key: "err_corrupt_beyond_fec", level: "error" },
+  CANCELLED: { key: "err_cancelled", level: "warn" },
+  STATE_LOCK: { key: "err_internal_state", level: "error" },
+  NO_ACTIVE_JOB: { key: "err_internal_state", level: "error" },
+  IO_ERROR: { key: "err_io", level: "error" },
+  TAR_ERROR: { key: "err_tar", level: "error" },
+  EXTRACT_ERROR: { key: "err_extract", level: "error" },
+};
+
+function mapErrorToUserFeedback(action, err) {
+  const code = err && typeof err === "object" ? String(err.code || "") : "";
+  const feedback = ERROR_CODE_FEEDBACK[code];
+  if (feedback) return { message: t(feedback.key), level: feedback.level };
 
   if (action === "encrypt") return { message: t("err_encrypt_generic"), level: "error" };
   if (action === "decrypt") return { message: t("err_decrypt_generic"), level: "error" };
@@ -567,7 +589,7 @@ async function loadAuditLog() {
     console.error("Failed to load audit log:", err);
     const tbody = document.getElementById("auditTableBody");
     if (tbody) {
-      tbody.innerHTML = `<tr><td colspan="6" class="audit-empty" style="color:#ff8b8b">${escapeHtml(err)}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="6" class="audit-empty" style="color:#ff8b8b">${escapeHtml(errorToText(err))}</td></tr>`;
     }
   }
 }
@@ -615,7 +637,7 @@ function bindEvents() {
       try {
         await handler(e);
       } catch (err) {
-        setStatus(`${t("status_handler_error_prefix")}: ${err}`, "error");
+        setStatus(`${t("status_handler_error_prefix")}: ${errorToText(err)}`, "error");
         console.error(err);
       }
     });
@@ -737,7 +759,7 @@ function bindEvents() {
       state.paused = newPausedState;
       pauseBtn.textContent = state.paused ? "Resume" : "Pause";
     } catch (err) {
-      setStatus(String(err), "error");
+      setStatus(errorToText(err), "error");
     }
   });
 
@@ -746,7 +768,7 @@ function bindEvents() {
     try {
       await invoke("cancel_job");
     } catch (err) {
-      setStatus(String(err), "error");
+      setStatus(errorToText(err), "error");
     }
   });
 

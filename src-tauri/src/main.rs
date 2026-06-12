@@ -25,23 +25,62 @@ struct AuditState {
     logger: Mutex<audit::AuditLogger>,
 }
 
+/// Structured command error sent to the frontend over IPC.
+/// `code` is a stable identifier the UI maps to localized messages;
+/// `message` is a human-readable detail used only as fallback/logging aid.
+#[derive(Serialize, Clone, Debug)]
+struct CmdError {
+    code: String,
+    message: String,
+}
+
+impl CmdError {
+    fn new(code: &str, message: impl Into<String>) -> Self {
+        Self {
+            code: code.to_string(),
+            message: message.into(),
+        }
+    }
+}
+
+impl From<crypto_core_rs::CoreError> for CmdError {
+    fn from(e: crypto_core_rs::CoreError) -> Self {
+        Self {
+            code: e.code.to_string(),
+            message: e.message,
+        }
+    }
+}
+
+const ERR_PASSWORD_REQUIRED: &str = "PASSWORD_REQUIRED";
+const ERR_INPUT_REQUIRED: &str = "INPUT_REQUIRED";
+const ERR_OUTPUT_REQUIRED: &str = "OUTPUT_REQUIRED";
+const ERR_OUTPUT_EXISTS: &str = "OUTPUT_EXISTS";
+const ERR_IO: &str = "IO_ERROR";
+const ERR_TAR: &str = "TAR_ERROR";
+const ERR_EXTRACT: &str = "EXTRACT_ERROR";
+const ERR_CANCELLED: &str = "CANCELLED";
+const ERR_STATE_LOCK: &str = "STATE_LOCK";
+const ERR_NO_ACTIVE_JOB: &str = "NO_ACTIVE_JOB";
+const ERR_UNKNOWN: &str = "UNKNOWN_ERROR";
+
 fn set_active_control(
     state: &tauri::State<'_, AppState>,
     ctrl: ControlFlags,
-) -> Result<(), String> {
+) -> Result<(), CmdError> {
     let mut guard = state
         .control
         .lock()
-        .map_err(|_| "State lock failed".to_string())?;
+        .map_err(|_| CmdError::new(ERR_STATE_LOCK, "State lock failed"))?;
     *guard = Some(ctrl);
     Ok(())
 }
 
-fn clear_active_control(state: &tauri::State<'_, AppState>) -> Result<(), String> {
+fn clear_active_control(state: &tauri::State<'_, AppState>) -> Result<(), CmdError> {
     let mut guard = state
         .control
         .lock()
-        .map_err(|_| "State lock failed".to_string())?;
+        .map_err(|_| CmdError::new(ERR_STATE_LOCK, "State lock failed"))?;
     *guard = None;
     Ok(())
 }
@@ -193,19 +232,19 @@ fn emit_progress(window: &tauri::Window, stage: &str, done: u64, total: u64) {
     let _ = window.emit("progress", payload);
 }
 
-fn ensure_parent_dir(path: &str) -> Result<(), String> {
+fn ensure_parent_dir(path: &str) -> Result<(), CmdError> {
     let path = Path::new(path);
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            std::fs::create_dir_all(parent).map_err(|e| CmdError::new(ERR_IO, e.to_string()))?;
         }
     }
     Ok(())
 }
 
-fn ensure_dir(path: &str) -> Result<(), String> {
+fn ensure_dir(path: &str) -> Result<(), CmdError> {
     if !path.is_empty() {
-        std::fs::create_dir_all(path).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(path).map_err(|e| CmdError::new(ERR_IO, e.to_string()))?;
     }
     Ok(())
 }
@@ -225,15 +264,15 @@ fn create_tar(
     skip_special: bool,
     ctrl: &ControlFlags,
     mut progress: Option<&mut dyn FnMut(u64)>,
-) -> Result<(NamedTempFile, String), String> {
+) -> Result<(NamedTempFile, String), CmdError> {
     let base_name = folder
         .file_name()
         .unwrap_or_default()
         .to_string_lossy()
         .to_string();
-    let tmp = NamedTempFile::new().map_err(|e| e.to_string())?;
+    let tmp = NamedTempFile::new().map_err(|e| CmdError::new(ERR_IO, e.to_string()))?;
 
-    let file = tmp.reopen().map_err(|e| e.to_string())?;
+    let file = tmp.reopen().map_err(|e| CmdError::new(ERR_IO, e.to_string()))?;
     let writer: Box<dyn std::io::Write> = match comp {
         "gz" => Box::new(flate2::write::GzEncoder::new(
             file,
@@ -253,11 +292,11 @@ fn create_tar(
     let mut count = 0;
     for entry in walkdir::WalkDir::new(folder).follow_links(false) {
         if ctrl.cancel.load(Ordering::SeqCst) {
-            return Err("Operation cancelled".to_string());
+            return Err(CmdError::new(ERR_CANCELLED, "Operation cancelled"));
         }
         while ctrl.pause.load(Ordering::SeqCst) {
             if ctrl.cancel.load(Ordering::SeqCst) {
-                return Err("Operation cancelled".to_string());
+                return Err(CmdError::new(ERR_CANCELLED, "Operation cancelled"));
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
@@ -275,7 +314,7 @@ fn create_tar(
                 if skip_special {
                     continue;
                 } else {
-                    return Err("Failed to read directory entry".to_string());
+                    return Err(CmdError::new(ERR_TAR, "Failed to read directory entry"));
                 }
             }
         };
@@ -298,11 +337,11 @@ fn create_tar(
         if entry.file_type().is_dir() {
             builder
                 .append_dir(&tar_path, path)
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| CmdError::new(ERR_TAR, e.to_string()))?;
         } else if entry.file_type().is_file() {
             builder
                 .append_path_with_name(path, &tar_path)
-                .map_err(|e| e.to_string())?;
+                .map_err(|e| CmdError::new(ERR_TAR, e.to_string()))?;
         }
     }
 
@@ -310,7 +349,9 @@ fn create_tar(
         cb(count);
     }
 
-    builder.finish().map_err(|e| e.to_string())?;
+    builder
+        .finish()
+        .map_err(|e| CmdError::new(ERR_TAR, e.to_string()))?;
     Ok((tmp, format!("{base_name}{}", tar_suffix(comp))))
 }
 
@@ -369,30 +410,30 @@ fn safe_extract_tar(tar_path: &str, out_dir: &str) -> Result<(), std::io::Error>
 }
 
 #[tauri::command]
-fn set_pause(pause: bool, state: tauri::State<AppState>) -> Result<(), String> {
+fn set_pause(pause: bool, state: tauri::State<AppState>) -> Result<(), CmdError> {
     let guard = state
         .control
         .lock()
-        .map_err(|_| "State lock failed".to_string())?;
+        .map_err(|_| CmdError::new(ERR_STATE_LOCK, "State lock failed"))?;
     if let Some(ctrl) = guard.as_ref() {
         ctrl.pause.store(pause, Ordering::SeqCst);
         Ok(())
     } else {
-        Err("No active job".to_string())
+        Err(CmdError::new(ERR_NO_ACTIVE_JOB, "No active job"))
     }
 }
 
 #[tauri::command]
-fn cancel_job(state: tauri::State<AppState>) -> Result<(), String> {
+fn cancel_job(state: tauri::State<AppState>) -> Result<(), CmdError> {
     let guard = state
         .control
         .lock()
-        .map_err(|_| "State lock failed".to_string())?;
+        .map_err(|_| CmdError::new(ERR_STATE_LOCK, "State lock failed"))?;
     if let Some(ctrl) = guard.as_ref() {
         ctrl.cancel.store(true, Ordering::SeqCst);
         Ok(())
     } else {
-        Err("No active job".to_string())
+        Err(CmdError::new(ERR_NO_ACTIVE_JOB, "No active job"))
     }
 }
 
@@ -402,19 +443,25 @@ async fn encrypt(
     window: tauri::Window,
     state: tauri::State<'_, AppState>,
     audit_state: tauri::State<'_, AuditState>,
-) -> Result<(), String> {
+) -> Result<(), CmdError> {
     if req.password.expose_secret().trim().is_empty() {
-        return Err("Password required".to_string());
+        return Err(CmdError::new(ERR_PASSWORD_REQUIRED, "Password required"));
     }
     if req.input_file.is_empty() && req.input_folder.is_empty() {
-        return Err("Input file or folder required".to_string());
+        return Err(CmdError::new(
+            ERR_INPUT_REQUIRED,
+            "Input file or folder required",
+        ));
     }
     if req.output_file.is_empty() {
-        return Err("Output path required".to_string());
+        return Err(CmdError::new(ERR_OUTPUT_REQUIRED, "Output path required"));
     }
 
     if std::path::Path::new(&req.output_file).exists() {
-        return Err("Output file already exists. Overwrite protection enabled.".to_string());
+        return Err(CmdError::new(
+            ERR_OUTPUT_EXISTS,
+            "Output file already exists. Overwrite protection enabled.",
+        ));
     }
 
     ensure_parent_dir(&req.output_file)?;
@@ -438,10 +485,10 @@ async fn encrypt(
     set_active_control(&state, ctrl_state)?;
 
     let window_clone = window.clone();
-    let join_res = tauri::async_runtime::spawn_blocking(move || {
+    let join_res = tauri::async_runtime::spawn_blocking(move || -> Result<(), CmdError> {
         emit_status(&window_clone, "backend_enc_start", "Starting encryption...");
         let kf_hash = match req.keyfile_path.as_deref() {
-            Some(p) => Some(get_keyfile_hash_rs(p).map_err(|e| e.message)?),
+            Some(p) => Some(get_keyfile_hash_rs(p).map_err(CmdError::from)?),
             None => None,
         };
         let (argon2_t, argon2_m, argon2_p) = sec_profile_params(&req.sec_profile);
@@ -490,7 +537,7 @@ async fn encrypt(
                 Some(&ctrl),
                 Some(&mut progress),
             )
-            .map_err(|e| e.message)?;
+            .map_err(CmdError::from)?;
         } else {
             let comp = if req.file_comp == "none" {
                 None
@@ -520,10 +567,11 @@ async fn encrypt(
                 Some(&ctrl),
                 Some(&mut progress),
             )
-            .map_err(|e| e.message)?;
+            .map_err(CmdError::from)?;
             // Atomic rename
-            std::fs::rename(&tmp_output_path, &req.output_file)
-                .map_err(|e| format!("Failed to rename temp file: {}", e))?;
+            std::fs::rename(&tmp_output_path, &req.output_file).map_err(|e| {
+                CmdError::new(ERR_IO, format!("Failed to rename temp file: {}", e))
+            })?;
         }
         emit_progress(&window_clone, "encrypt", 1, 1);
         emit_status(&window_clone, "backend_enc_complete", "Encryption complete");
@@ -531,9 +579,9 @@ async fn encrypt(
     })
     .await;
 
-    let res: Result<(), String> = match join_res {
+    let res: Result<(), CmdError> = match join_res {
         Ok(inner) => inner,
-        Err(e) => Err(e.to_string()),
+        Err(e) => Err(CmdError::new(ERR_UNKNOWN, e.to_string())),
     };
     clear_active_control(&state)?;
 
@@ -545,7 +593,7 @@ async fn encrypt(
         size_mb,
         duration_s: Some(t0.elapsed().as_secs_f64()),
         status: if res.is_ok() { "OK" } else { "ERR" }.to_string(),
-        error: res.as_ref().err().cloned(),
+        error: res.as_ref().err().map(|e| e.message.clone()),
     };
     if let Ok(logger) = audit_state.logger.lock() {
         let _ = logger.log(&entry);
@@ -560,22 +608,25 @@ async fn decrypt(
     window: tauri::Window,
     state: tauri::State<'_, AppState>,
     audit_state: tauri::State<'_, AuditState>,
-) -> Result<DecryptResult, String> {
+) -> Result<DecryptResult, CmdError> {
     if req.password.expose_secret().trim().is_empty() {
-        return Err("Password required".to_string());
+        return Err(CmdError::new(ERR_PASSWORD_REQUIRED, "Password required"));
     }
     if req.input_file.is_empty() {
-        return Err("Input file required".to_string());
+        return Err(CmdError::new(ERR_INPUT_REQUIRED, "Input file required"));
     }
     if req.output_path.is_empty() {
-        return Err("Output path required".to_string());
+        return Err(CmdError::new(ERR_OUTPUT_REQUIRED, "Output path required"));
     }
 
     if req.extract {
         ensure_dir(&req.output_path)?;
     } else {
         if std::path::Path::new(&req.output_path).exists() {
-            return Err("Output file already exists. Overwrite protection enabled.".to_string());
+            return Err(CmdError::new(
+                ERR_OUTPUT_EXISTS,
+                "Output file already exists. Overwrite protection enabled.",
+            ));
         }
         ensure_parent_dir(&req.output_path)?;
     }
@@ -596,10 +647,10 @@ async fn decrypt(
 
     let window_clone = window.clone();
     let join_res =
-        tauri::async_runtime::spawn_blocking(move || -> Result<DecryptResult, String> {
+        tauri::async_runtime::spawn_blocking(move || -> Result<DecryptResult, CmdError> {
             emit_status(&window_clone, "backend_dec_start", "Starting decryption...");
             let kf_hash = match req.keyfile_path.as_deref() {
-                Some(p) => Some(get_keyfile_hash_rs(p).map_err(|e| e.message)?),
+                Some(p) => Some(get_keyfile_hash_rs(p).map_err(CmdError::from)?),
                 None => None,
             };
             if !req.extract {
@@ -615,10 +666,11 @@ async fn decrypt(
                     Some(&ctrl),
                     Some(&mut progress),
                 )
-                .map_err(|e| e.message)?;
+                .map_err(CmdError::from)?;
                 // Atomic rename
-                std::fs::rename(&tmp_output_path, &req.output_path)
-                    .map_err(|e| format!("Failed to rename temp file: {}", e))?;
+                std::fs::rename(&tmp_output_path, &req.output_path).map_err(|e| {
+                    CmdError::new(ERR_IO, format!("Failed to rename temp file: {}", e))
+                })?;
                 emit_progress(&window_clone, "decrypt", 1, 1);
                 emit_status(&window_clone, "backend_dec_complete", "Decryption complete");
                 return Ok(DecryptResult {
@@ -631,7 +683,7 @@ async fn decrypt(
                 "backend_dec_archive",
                 "Decrypting archive...",
             );
-            let tmp_tar = NamedTempFile::new().map_err(|e| e.to_string())?;
+            let tmp_tar = NamedTempFile::new().map_err(|e| CmdError::new(ERR_IO, e.to_string()))?;
             let tar_path = tmp_tar.path().to_string_lossy().to_string();
             let mut progress = |stage: &str, done: u64, total: u64| {
                 emit_progress(&window_clone, stage, done, total);
@@ -644,10 +696,11 @@ async fn decrypt(
                 Some(&ctrl),
                 Some(&mut progress),
             )
-            .map_err(|e| e.message)?;
+            .map_err(CmdError::from)?;
 
             emit_status(&window_clone, "backend_dec_extract", "Extracting files...");
-            safe_extract_tar(&tar_path, &req.output_path).map_err(|e| e.to_string())?;
+            safe_extract_tar(&tar_path, &req.output_path)
+                .map_err(|e| CmdError::new(ERR_EXTRACT, e.to_string()))?;
 
             if req.keep_tar {
                 let target = Path::new(&req.output_path).join("decrypted.tar");
@@ -662,9 +715,9 @@ async fn decrypt(
         })
         .await;
 
-    let res: Result<DecryptResult, String> = match join_res {
+    let res: Result<DecryptResult, CmdError> = match join_res {
         Ok(inner) => inner,
-        Err(e) => Err(e.to_string()),
+        Err(e) => Err(CmdError::new(ERR_UNKNOWN, e.to_string())),
     };
     clear_active_control(&state)?;
 
@@ -676,7 +729,7 @@ async fn decrypt(
         size_mb,
         duration_s: Some(t0.elapsed().as_secs_f64()),
         status: if res.is_ok() { "OK" } else { "ERR" }.to_string(),
-        error: res.as_ref().err().cloned(),
+        error: res.as_ref().err().map(|e| e.message.clone()),
     };
     if let Ok(logger) = audit_state.logger.lock() {
         let _ = logger.log(&entry);
@@ -691,12 +744,12 @@ async fn verify(
     window: tauri::Window,
     state: tauri::State<'_, AppState>,
     audit_state: tauri::State<'_, AuditState>,
-) -> Result<VerifyResult, String> {
+) -> Result<VerifyResult, CmdError> {
     if req.password.expose_secret().trim().is_empty() {
-        return Err("Password required".to_string());
+        return Err(CmdError::new(ERR_PASSWORD_REQUIRED, "Password required"));
     }
     if req.input_file.is_empty() {
-        return Err("Input file required".to_string());
+        return Err(CmdError::new(ERR_INPUT_REQUIRED, "Input file required"));
     }
 
     let input_path = req.input_file.clone();
@@ -714,33 +767,34 @@ async fn verify(
     set_active_control(&state, ctrl_state)?;
 
     let window_clone = window.clone();
-    let join_res = tauri::async_runtime::spawn_blocking(move || -> Result<VerifyResult, String> {
-        emit_status(&window_clone, "backend_verify_start", "Verifying...");
-        let kf_hash = match req.keyfile_path.as_deref() {
-            Some(p) => Some(get_keyfile_hash_rs(p).map_err(|e| e.message)?),
-            None => None,
-        };
-        let mut progress = |stage: &str, done: u64, total: u64| {
-            emit_progress(&window_clone, stage, done, total);
-        };
-        let meta = verify_file_integrity_rs_controlled(
-            &req.input_file,
-            req.password.expose_secret(),
-            kf_hash.as_deref(),
-            Some(&ctrl),
-            Some(&mut progress),
-        )
-        .map_err(|e| e.message)?;
-        emit_status(&window_clone, "backend_verify_ok", "Verification OK");
-        Ok(VerifyResult {
-            meta: MetaInfoDto::from(meta),
+    let join_res =
+        tauri::async_runtime::spawn_blocking(move || -> Result<VerifyResult, CmdError> {
+            emit_status(&window_clone, "backend_verify_start", "Verifying...");
+            let kf_hash = match req.keyfile_path.as_deref() {
+                Some(p) => Some(get_keyfile_hash_rs(p).map_err(CmdError::from)?),
+                None => None,
+            };
+            let mut progress = |stage: &str, done: u64, total: u64| {
+                emit_progress(&window_clone, stage, done, total);
+            };
+            let meta = verify_file_integrity_rs_controlled(
+                &req.input_file,
+                req.password.expose_secret(),
+                kf_hash.as_deref(),
+                Some(&ctrl),
+                Some(&mut progress),
+            )
+            .map_err(CmdError::from)?;
+            emit_status(&window_clone, "backend_verify_ok", "Verification OK");
+            Ok(VerifyResult {
+                meta: MetaInfoDto::from(meta),
+            })
         })
-    })
-    .await;
+        .await;
 
-    let res: Result<VerifyResult, String> = match join_res {
+    let res: Result<VerifyResult, CmdError> = match join_res {
         Ok(inner) => inner,
-        Err(e) => Err(e.to_string()),
+        Err(e) => Err(CmdError::new(ERR_UNKNOWN, e.to_string())),
     };
     clear_active_control(&state)?;
 
@@ -752,7 +806,7 @@ async fn verify(
         size_mb,
         duration_s: Some(t0.elapsed().as_secs_f64()),
         status: if res.is_ok() { "OK" } else { "ERR" }.to_string(),
-        error: res.as_ref().err().cloned(),
+        error: res.as_ref().err().map(|e| e.message.clone()),
     };
     if let Ok(logger) = audit_state.logger.lock() {
         let _ = logger.log(&entry);
@@ -762,34 +816,34 @@ async fn verify(
 }
 
 #[tauri::command]
-fn read_metadata(req: MetadataRequest) -> Result<MetaInfoDto, String> {
+fn read_metadata(req: MetadataRequest) -> Result<MetaInfoDto, CmdError> {
     if req.input_file.is_empty() {
-        return Err("Input file required".to_string());
+        return Err(CmdError::new(ERR_INPUT_REQUIRED, "Input file required"));
     }
     read_metadata_rs(&req.input_file)
         .map(MetaInfoDto::from)
-        .map_err(|e| e.message)
+        .map_err(CmdError::from)
 }
 
 /// Audit log commands
 #[tauri::command]
 fn get_audit_log(
     audit_state: tauri::State<'_, AuditState>,
-) -> Result<Vec<audit::AuditEntry>, String> {
+) -> Result<Vec<audit::AuditEntry>, CmdError> {
     let logger = audit_state
         .logger
         .lock()
-        .map_err(|_| "State lock failed".to_string())?;
+        .map_err(|_| CmdError::new(ERR_STATE_LOCK, "State lock failed"))?;
     Ok(logger.read_recent(500))
 }
 
 #[tauri::command]
-fn clear_audit_log(audit_state: tauri::State<'_, AuditState>) -> Result<(), String> {
+fn clear_audit_log(audit_state: tauri::State<'_, AuditState>) -> Result<(), CmdError> {
     let logger = audit_state
         .logger
         .lock()
-        .map_err(|_| "State lock failed".to_string())?;
-    logger.clear()
+        .map_err(|_| CmdError::new(ERR_STATE_LOCK, "State lock failed"))?;
+    logger.clear().map_err(|e| CmdError::new(ERR_IO, e))
 }
 
 /// Open file dialog — supports single or multiple selection.
@@ -798,7 +852,7 @@ async fn open_file_dialog(
     window: tauri::Window,
     default_path: Option<String>,
     multiple: Option<bool>,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, CmdError> {
     let multi = multiple.unwrap_or(false);
     tauri::async_runtime::spawn_blocking(move || {
         let mut builder = window.dialog().file();
@@ -822,14 +876,14 @@ async fn open_file_dialog(
         }
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| CmdError::new(ERR_UNKNOWN, e.to_string()))?
 }
 
 #[tauri::command]
 async fn open_folder_dialog(
     window: tauri::Window,
     default_path: Option<String>,
-) -> Result<Option<String>, String> {
+) -> Result<Option<String>, CmdError> {
     tauri::async_runtime::spawn_blocking(move || {
         let mut builder = window.dialog().file();
         if let Some(path) = default_path {
@@ -841,14 +895,14 @@ async fn open_folder_dialog(
             .map(|p| p.to_string_lossy().to_string()))
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| CmdError::new(ERR_UNKNOWN, e.to_string()))?
 }
 
 #[tauri::command]
 async fn save_file_dialog(
     window: tauri::Window,
     default_path: Option<String>,
-) -> Result<Option<String>, String> {
+) -> Result<Option<String>, CmdError> {
     tauri::async_runtime::spawn_blocking(move || {
         let mut builder = window.dialog().file();
         if let Some(path) = default_path {
@@ -868,7 +922,7 @@ async fn save_file_dialog(
             .map(|p| p.to_string_lossy().to_string()))
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| CmdError::new(ERR_UNKNOWN, e.to_string()))?
 }
 
 /// Build a 16×16 RGBA icon with a stylised lock shape.

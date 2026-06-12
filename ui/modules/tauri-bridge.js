@@ -4,34 +4,24 @@ export const invoke = tauri?.core?.invoke || tauri?.tauri?.invoke || tauri?.invo
 export const eventApi = tauri?.event || tauri?.core?.event || tauri?.tauri?.event;
 export const windowApi = tauri?.window || tauri?.core?.window;
 
+// Errors are rethrown as-is so structured backend errors ({code, message})
+// reach the caller intact.
 export async function pickFile(target, defaultPath = null) {
     if (!invoke) return;
-    try {
-        const selected = await invoke("open_file_dialog", { defaultPath });
-        if (selected) target.value = selected;
-    } catch (err) {
-        throw new Error(String(err));
-    }
+    const selected = await invoke("open_file_dialog", { defaultPath });
+    if (selected) target.value = selected;
 }
 
 export async function pickFolder(target, defaultPath = null) {
     if (!invoke) return;
-    try {
-        const selected = await invoke("open_folder_dialog", { defaultPath });
-        if (selected) target.value = selected;
-    } catch (err) {
-        throw new Error(String(err));
-    }
+    const selected = await invoke("open_folder_dialog", { defaultPath });
+    if (selected) target.value = selected;
 }
 
 export async function pickSave(target, defaultPath = null) {
     if (!invoke) return;
-    try {
-        const selected = await invoke("save_file_dialog", { defaultPath });
-        if (selected) target.value = selected;
-    } catch (err) {
-        throw new Error(String(err));
-    }
+    const selected = await invoke("save_file_dialog", { defaultPath });
+    if (selected) target.value = selected;
 }
 
 export function bindWindowControls() {
