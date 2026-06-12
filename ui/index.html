@@ -48,7 +48,7 @@
           <span class="subtitle">Local Encryption</span>
         </div>
       </div>
-      <nav class="nav">
+      <nav class="nav" role="tablist" aria-label="Main sections">
         <button class="nav-item active" data-tab="encrypt" data-i18n="nav_encrypt" role="tab" aria-selected="true"
           aria-controls="panel-encrypt">Encrypt</button>
         <button class="nav-item" data-tab="decrypt" data-i18n="nav_decrypt" role="tab" aria-selected="false"
@@ -66,7 +66,7 @@
       </nav>
       <div class="status-card">
         <div class="status-label">Status</div>
-        <div id="statusText" class="status-text">Booting...</div>
+        <div id="statusText" class="status-text" role="status" aria-live="polite">Booting...</div>
         <div class="progress">
           <div class="progress-track">
             <div id="progressFill" class="progress-fill"></div>
