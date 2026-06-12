@@ -6,6 +6,53 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.0.0] — 2026-06-12
+
+### Changed — **BREAKING: file format header v5**
+
+- **Encrypted filename** — the original filename is now stored AES-256-GCM-encrypted
+  inside the header (`FLAG_ENC_FILENAME`, reserved nonce `(nonce_base, 0xFFFFFFFE,
+  0xFFFFFFFE)`, dedicated AAD context `ECF1-FNAME-V5`). Plaintext filenames are no
+  longer written. Files produced by 2.x are **not readable by 1.x**; all v1–v4 files
+  remain fully readable (pinned by committed fixtures in `tests/fixtures/`).
+- `read_metadata` (no password) reports an empty filename for v5 files; decrypt and
+  verify return the real name after header authentication. The UI shows an
+  "(encrypted — shown after decrypt/verify)" placeholder.
+- Maximum stored filename length: 4096 bytes (`MAX_FILENAME_LEN`).
+
+### Added
+
+- Structured `{code, message}` errors across the Tauri IPC boundary; the frontend
+  maps stable codes to localized messages (EN/IT).
+- v4 format fixtures and backward-compatibility tests; FEC recovery-budget tests;
+  pause/cancel regression tests.
+- Custom selects: full keyboard support and ARIA state sync; status live region.
+
+### Changed
+
+- Audit log stores only stable error codes (no raw messages or paths).
+- Password fields are cleared after each completed operation and auto-clear after
+  5 minutes of inactivity.
+- Pause/cancel is event-driven (`Condvar`) instead of a 50ms polling loop.
+- `ui/app.js` split into feature modules (no build step required).
+- Core decrypt/verify share one block-processing path; per-shard heap allocations
+  removed from the hot loops.
+- `FORMAT_SPEC.md` rewritten for v5 and realigned with the implementation.
+
+### Fixed
+
+- HTML injection via filenames/paths/errors rendered in history, batch and audit
+  views (now escaped).
+- Stale `read_metadata` responses can no longer overwrite the decrypt panel;
+  manual edits to output path/auto-extract are preserved.
+- Batch queue validates the `.ecf` extension and no longer produces an empty
+  output directory for separator-less paths.
+- Predictable `{output}.tmp` files removed from the backend (the core already
+  writes via an unpredictable temp file with atomic rename).
+- Encrypting a filesystem root no longer yields a `.tar`-named archive.
+
+---
+
 ## [1.1.0] — 2026-05-12
 
 ### Added
