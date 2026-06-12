@@ -593,7 +593,7 @@ async fn encrypt(
         size_mb,
         duration_s: Some(t0.elapsed().as_secs_f64()),
         status: if res.is_ok() { "OK" } else { "ERR" }.to_string(),
-        error: res.as_ref().err().map(|e| e.message.clone()),
+        error: res.as_ref().err().map(|e| e.code.clone()),
     };
     if let Ok(logger) = audit_state.logger.lock() {
         let _ = logger.log(&entry);
@@ -729,7 +729,7 @@ async fn decrypt(
         size_mb,
         duration_s: Some(t0.elapsed().as_secs_f64()),
         status: if res.is_ok() { "OK" } else { "ERR" }.to_string(),
-        error: res.as_ref().err().map(|e| e.message.clone()),
+        error: res.as_ref().err().map(|e| e.code.clone()),
     };
     if let Ok(logger) = audit_state.logger.lock() {
         let _ = logger.log(&entry);
@@ -806,7 +806,7 @@ async fn verify(
         size_mb,
         duration_s: Some(t0.elapsed().as_secs_f64()),
         status: if res.is_ok() { "OK" } else { "ERR" }.to_string(),
-        error: res.as_ref().err().map(|e| e.message.clone()),
+        error: res.as_ref().err().map(|e| e.code.clone()),
     };
     if let Ok(logger) = audit_state.logger.lock() {
         let _ = logger.log(&entry);
