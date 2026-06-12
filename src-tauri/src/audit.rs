@@ -187,4 +187,36 @@ mod tests {
         let logger = AuditLogger::new(dir.path().to_path_buf());
         assert!(logger.read_recent(100).is_empty());
     }
+
+    #[test]
+    fn entries_with_special_characters_stay_valid_jsonl() {
+        let dir = tempdir().unwrap();
+        let logger = AuditLogger::new(dir.path().to_path_buf());
+
+        let tricky_file = "/tmp/Ünïcodé \"quoted\" \\backslash\\ \nnewline.ecf";
+        let entry = AuditEntry {
+            ts: 1_700_000_000,
+            op: "decrypt".to_string(),
+            file: tricky_file.to_string(),
+            size_mb: Some(0.1),
+            duration_s: Some(1.2),
+            status: "ERR".to_string(),
+            error: Some("CORRUPT_BEYOND_FEC".to_string()),
+        };
+        logger.log(&entry).unwrap();
+        logger.log(&make_entry("encrypt", "OK")).unwrap();
+
+        // Every non-empty line of the file must be standalone valid JSON.
+        let raw = std::fs::read_to_string(dir.path().join("audit.jsonl")).unwrap();
+        let lines: Vec<&str> = raw.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert_eq!(lines.len(), 2);
+        for line in &lines {
+            serde_json::from_str::<AuditEntry>(line).expect("line must be valid JSON");
+        }
+
+        let entries = logger.read_recent(10);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[1].file, tricky_file);
+        assert_eq!(entries[1].error.as_deref(), Some("CORRUPT_BEYOND_FEC"));
+    }
 }

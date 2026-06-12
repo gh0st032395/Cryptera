@@ -256,6 +256,21 @@ fn tar_suffix(comp: &str) -> &'static str {
     }
 }
 
+/// Archive base name derived from the folder name, with a sensible
+/// fallback for paths without a final component (e.g. filesystem root).
+fn tar_base_name(folder: &Path) -> String {
+    let name = folder
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    if name.is_empty() {
+        "archive".to_string()
+    } else {
+        name
+    }
+}
+
 fn create_tar(
     folder: &Path,
     comp: &str,
@@ -263,11 +278,7 @@ fn create_tar(
     ctrl: &ControlFlags,
     mut progress: Option<&mut dyn FnMut(u64)>,
 ) -> Result<(NamedTempFile, String), CmdError> {
-    let base_name = folder
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
+    let base_name = tar_base_name(folder);
     let tmp = NamedTempFile::new().map_err(|e| CmdError::new(ERR_IO, e.to_string()))?;
 
     let file = tmp
@@ -999,6 +1010,20 @@ mod tests {
         assert_eq!(tar_suffix("gz"), ".tar.gz");
         assert_eq!(tar_suffix("bz2"), ".tar.bz2");
         assert_eq!(tar_suffix("xz"), ".tar.xz");
+    }
+
+    #[test]
+    fn tar_base_name_falls_back_for_root_paths() {
+        assert_eq!(tar_base_name(Path::new("/home/user/docs")), "docs");
+        assert_eq!(tar_base_name(Path::new("/")), "archive");
+    }
+
+    #[test]
+    fn cmd_error_preserves_core_error_code() {
+        let core_err = crypto_core_rs::CoreError::new("PASSWORD_INVALID", "details with /paths");
+        let cmd_err = CmdError::from(core_err);
+        assert_eq!(cmd_err.code, "PASSWORD_INVALID");
+        assert_eq!(cmd_err.message, "details with /paths");
     }
 
     #[test]
