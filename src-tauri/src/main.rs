@@ -545,13 +545,15 @@ async fn encrypt(
                 Some(req.file_comp.as_str())
             };
             let original_name = if req.hide_filename { Some("") } else { None };
-            let tmp_output_path = format!("{}.tmp", req.output_file);
             let mut progress = |stage: &str, done: u64, total: u64| {
                 emit_progress(&window_clone, stage, done, total);
             };
+            // The core writes to an unpredictable NamedTempFile next to the
+            // output and renames it atomically, so no intermediate file is
+            // needed here.
             encrypt_file_rs_controlled(
                 &req.input_file,
-                &tmp_output_path,
+                &req.output_file,
                 req.password.expose_secret(),
                 kf_hash.as_deref(),
                 comp,
@@ -568,10 +570,6 @@ async fn encrypt(
                 Some(&mut progress),
             )
             .map_err(CmdError::from)?;
-            // Atomic rename
-            std::fs::rename(&tmp_output_path, &req.output_file).map_err(|e| {
-                CmdError::new(ERR_IO, format!("Failed to rename temp file: {}", e))
-            })?;
         }
         emit_progress(&window_clone, "encrypt", 1, 1);
         emit_status(&window_clone, "backend_enc_complete", "Encryption complete");
@@ -657,20 +655,17 @@ async fn decrypt(
                 let mut progress = |stage: &str, done: u64, total: u64| {
                     emit_progress(&window_clone, stage, done, total);
                 };
-                let tmp_output_path = format!("{}.tmp", req.output_path);
+                // The core writes to an unpredictable NamedTempFile next to
+                // the output and renames it atomically.
                 let meta = decrypt_file_ex_rs_controlled(
                     &req.input_file,
-                    &tmp_output_path,
+                    &req.output_path,
                     req.password.expose_secret(),
                     kf_hash.as_deref(),
                     Some(&ctrl),
                     Some(&mut progress),
                 )
                 .map_err(CmdError::from)?;
-                // Atomic rename
-                std::fs::rename(&tmp_output_path, &req.output_path).map_err(|e| {
-                    CmdError::new(ERR_IO, format!("Failed to rename temp file: {}", e))
-                })?;
                 emit_progress(&window_clone, "decrypt", 1, 1);
                 emit_status(&window_clone, "backend_dec_complete", "Decryption complete");
                 return Ok(DecryptResult {
