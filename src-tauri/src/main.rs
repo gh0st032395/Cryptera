@@ -751,6 +751,32 @@ async fn verify(
     .await
 }
 
+#[tauri::command]
+fn get_app_version() -> String {
+    env!("CARGO_PKG_VERSION").to_string()
+}
+
+/// Open the GitHub releases page in the system browser. The app itself
+/// performs no network calls (CSP connect-src 'none'); update checks are
+/// an explicit user action in the browser.
+#[tauri::command]
+fn open_releases_page() -> Result<(), CmdError> {
+    open::that("https://github.com/gh0st032395/Cryptera/releases")
+        .map_err(|e| CmdError::new(ERR_IO, e.to_string()))
+}
+
+/// Total and available system memory in MiB, used by the UI to warn when
+/// a high-memory Argon2 profile may not fit.
+#[tauri::command]
+fn get_memory_info() -> serde_json::Value {
+    let mut sys = sysinfo::System::new();
+    sys.refresh_memory();
+    serde_json::json!({
+        "total_mb": sys.total_memory() / (1024 * 1024),
+        "available_mb": sys.available_memory() / (1024 * 1024),
+    })
+}
+
 /// File passed on the command line (double-click on an .ecf file once the
 /// file association is installed). macOS delivers opened files through
 /// RunEvent::Opened instead of argv; see main().
@@ -980,6 +1006,9 @@ fn main() {
             verify,
             read_metadata,
             get_launch_file,
+            get_app_version,
+            open_releases_page,
+            get_memory_info,
             set_pause,
             cancel_job,
             open_file_dialog,

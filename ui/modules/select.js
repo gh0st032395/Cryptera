@@ -52,6 +52,9 @@ export function setupCustomSelects() {
       if (input) {
         input.value = val;
         if (input.id === "languageSelect") updateLanguage(val);
+        // Let listeners react to programmatic value changes (hidden inputs
+        // do not fire change events on their own).
+        input.dispatchEvent(new Event("change", { bubbles: true }));
       }
       trigger.textContent = text;
       options.forEach(o => o.classList.remove("selected"));

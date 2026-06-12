@@ -179,6 +179,15 @@ function bindEvents() {
   onClick("refreshAuditBtn", loadAuditLog);
   onClick("clearAuditBtn", clearAuditLog);
 
+  // About panel
+  onClick("checkUpdatesBtn", () => invoke("open_releases_page"));
+
+  // Warn when the selected Argon2 profile may not fit in available RAM
+  const encSecProfileEl = $("encSecProfile");
+  if (encSecProfileEl) {
+    encSecProfileEl.addEventListener("change", () => warnIfLowMemory(encSecProfileEl.value));
+  }
+
   // Main action buttons
   onClick("encryptBtn", handleEncrypt);
   onClick("decryptBtn", handleDecrypt);
@@ -219,6 +228,27 @@ function assertBackendApi() {
   if (!invoke) return false;
   if (!eventApi || !eventApi.listen) return false;
   return true;
+}
+
+// ── Memory guard for Argon2 profiles ──────────────────────────────────────────
+const PROFILE_MEMORY_MB = { Standard: 64, Strong: 256, Paranoid: 512 };
+
+async function warnIfLowMemory(profile) {
+  const need = PROFILE_MEMORY_MB[profile];
+  if (!invoke || !need || need <= PROFILE_MEMORY_MB.Standard) return;
+  try {
+    const mem = await invoke("get_memory_info");
+    const avail = Number(mem?.available_mb || 0);
+    // Keep headroom for the OS and the app itself.
+    if (avail > 0 && avail < need + 256) {
+      setStatus(
+        t("warn_low_memory").replace("{need}", String(need)).replace("{avail}", String(avail)),
+        "warn",
+      );
+    }
+  } catch (err) {
+    console.error("memory info:", err);
+  }
 }
 
 // ── Launch file (.ecf opened via file association) ───────────────────────────
@@ -275,6 +305,12 @@ function bootInit() {
     setBusy(false);
     setStatus(t("status_ready"), "success");
     applyLaunchFile().catch((err) => console.error(err));
+    invoke("get_app_version")
+      .then((v) => {
+        const el = $("appVersion");
+        if (el) el.textContent = v;
+      })
+      .catch(() => { /* non-critical */ });
   } catch (err) {
     setStatus(`${t("status_init_error_prefix")}: ${errorToText(err)}`, "error");
     console.error(err);

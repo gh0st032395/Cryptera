@@ -20,3 +20,5 @@ xz2 = "0.1"
 tar = "0.4.45"
 tempfile = "3.10"
 walkdir = "2.5"
+open = "5"
+sysinfo = { version = "0.33", default-features = false, features = ["system"] }
