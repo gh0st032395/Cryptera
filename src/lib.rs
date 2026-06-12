@@ -12,6 +12,7 @@ use flate2::Compression;
 use hmac::{Hmac, Mac};
 use rand::rngs::OsRng;
 use rand::RngCore;
+use rayon::prelude::*;
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::io::{self, BufReader, BufWriter, Read, Seek, Write};
@@ -1305,10 +1306,6 @@ pub fn encrypt_file_rs_controlled(
     let shard_size_usize = shard_size as usize;
     let m = (k + r) as usize;
     let mut block_buf = vec![0u8; block_size_usize];
-    // AAD = prefix || block_index || shard_index; the prefix part never
-    // changes, so reuse one buffer instead of allocating per shard.
-    let mut aad = Vec::with_capacity(prefix.len() + 8);
-    aad.extend_from_slice(&prefix);
 
     for block_index in 0..num_blocks {
         control_wait(control)?;
@@ -1337,21 +1334,29 @@ pub fn encrypt_file_rs_controlled(
         }
         let coded = fec_encode(&data_shards, &g, k as usize, r as usize)?;
 
-        for shard_index in 0..m {
-            let shard_plain = &coded[shard_index];
-            let nonce = nonce12(nonce_base, block_index as u32, shard_index as u32);
-            aad.truncate(prefix.len());
-            aad.extend_from_slice(&(block_index as u32).to_be_bytes());
-            aad.extend_from_slice(&(shard_index as u32).to_be_bytes());
-            let ct = cipher
-                .encrypt(
-                    Nonce::from_slice(&nonce),
-                    Payload {
-                        msg: shard_plain,
-                        aad: &aad,
-                    },
-                )
-                .map_err(|_| CoreError::new(DECRYPT_UNKNOWN_ERROR, "Encrypt failed"))?;
+        // Shards of a block are independent (deterministic per-shard nonces),
+        // so encrypt them in parallel and write sequentially in order.
+        let encrypted: Vec<Vec<u8>> = (0..m)
+            .into_par_iter()
+            .map(|shard_index| -> Result<Vec<u8>, CoreError> {
+                let nonce = nonce12(nonce_base, block_index as u32, shard_index as u32);
+                let mut aad = Vec::with_capacity(prefix.len() + 8);
+                aad.extend_from_slice(&prefix);
+                aad.extend_from_slice(&(block_index as u32).to_be_bytes());
+                aad.extend_from_slice(&(shard_index as u32).to_be_bytes());
+                cipher
+                    .encrypt(
+                        Nonce::from_slice(&nonce),
+                        Payload {
+                            msg: &coded[shard_index],
+                            aad: &aad,
+                        },
+                    )
+                    .map_err(|_| CoreError::new(DECRYPT_UNKNOWN_ERROR, "Encrypt failed"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        for ct in &encrypted {
             let (ct_body, tag) = ct.split_at(shard_size_usize);
             write_crc_copies(&mut f_out, ct_body, tag)
                 .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
@@ -1661,18 +1666,13 @@ fn process_blocks(
     let m = k + r;
     let shard_size = params.shard_size as usize;
 
-    // Reusable per-shard buffers: AAD prefix never changes; `data` holds
-    // ciphertext||tag for the AEAD call.
-    let mut aad = Vec::with_capacity(prepared.prefix.len() + 8);
-    aad.extend_from_slice(&prepared.prefix);
-    let mut data = Vec::with_capacity(shard_size + params.tag_len as usize);
-
     for block_index in 0..num_blocks {
         control_wait(control)?;
         progress_report(&mut progress, stage, block_index, num_blocks);
-        let mut shards: Vec<Option<Vec<u8>>> = vec![None; m];
-        let mut present = vec![false; m];
 
+        // Phase 1 (sequential): read all shard records of the block.
+        // `None` marks a shard whose stored CRC does not match (corrupted).
+        let mut raw: Vec<Option<(Vec<u8>, Vec<u8>)>> = Vec::with_capacity(m);
         for shard_index in 0..m {
             let mut crc_fields = [0u8; CRC_BLOCK_SIZE];
             f_in.read_exact(&mut crc_fields).map_err(|_| {
@@ -1700,28 +1700,40 @@ fn process_blocks(
             let mut tag = vec![0u8; params.tag_len as usize];
             f_in.read_exact(&mut tag)
                 .map_err(|_| CoreError::new(DECRYPT_TRUNCATED, format!("File truncated at authentication tag (block {block_index}, shard {shard_index})")))?;
-            let crc_calc = crc32_two(&ct, &tag);
-            if !crcs.contains(&crc_calc) {
-                continue;
-            }
-            let nonce = nonce12(params.nonce_base, block_index as u32, shard_index as u32);
-            aad.truncate(prepared.prefix.len());
-            aad.extend_from_slice(&(block_index as u32).to_be_bytes());
-            aad.extend_from_slice(&(shard_index as u32).to_be_bytes());
-            data.clear();
-            data.extend_from_slice(&ct);
-            data.extend_from_slice(&tag);
-            if let Ok(pt) = prepared.cipher.decrypt(
-                Nonce::from_slice(&nonce),
-                Payload {
-                    msg: &data,
-                    aad: &aad,
-                },
-            ) {
-                shards[shard_index] = Some(pt);
-                present[shard_index] = true;
+            if crcs.contains(&crc32_two(&ct, &tag)) {
+                raw.push(Some((ct, tag)));
+            } else {
+                raw.push(None);
             }
         }
+
+        // Phase 2 (parallel): authenticate and decrypt the shards.
+        let mut shards: Vec<Option<Vec<u8>>> = raw
+            .into_par_iter()
+            .enumerate()
+            .map(|(shard_index, rec)| {
+                let (ct, tag) = rec?;
+                let nonce = nonce12(params.nonce_base, block_index as u32, shard_index as u32);
+                let mut aad = Vec::with_capacity(prepared.prefix.len() + 8);
+                aad.extend_from_slice(&prepared.prefix);
+                aad.extend_from_slice(&(block_index as u32).to_be_bytes());
+                aad.extend_from_slice(&(shard_index as u32).to_be_bytes());
+                let mut data = Vec::with_capacity(ct.len() + tag.len());
+                data.extend_from_slice(&ct);
+                data.extend_from_slice(&tag);
+                prepared
+                    .cipher
+                    .decrypt(
+                        Nonce::from_slice(&nonce),
+                        Payload {
+                            msg: &data,
+                            aad: &aad,
+                        },
+                    )
+                    .ok()
+            })
+            .collect();
+        let present: Vec<bool> = shards.iter().map(|s| s.is_some()).collect();
 
         let have_all_data = present.iter().take(k).all(|&v| v);
         if !have_all_data && present.iter().filter(|v| **v).count() < k {
