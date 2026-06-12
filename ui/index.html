@@ -513,6 +513,23 @@
       </section>
     </main>
   </div>
+  <!-- Password irreversibility warning (shown once, before first encryption) -->
+  <div id="pwdWarningOverlay" class="modal-overlay" style="display:none" role="dialog" aria-modal="true"
+    aria-labelledby="pwdWarningTitle">
+    <div class="modal-box">
+      <div class="modal-title" id="pwdWarningTitle" data-i18n="pwd_warning_title">There is no password recovery</div>
+      <p class="modal-text" data-i18n="pwd_warning_text">
+        Cryptera has no backdoor and no recovery mechanism: if you forget the password
+        (and lose the keyfile, if you used one), the encrypted data is permanently
+        unrecoverable. Store the password in a safe place, such as a password manager.
+      </p>
+      <div class="modal-actions">
+        <button id="pwdWarningCancel" class="ghost" data-i18n="pwd_warning_cancel">Cancel</button>
+        <button id="pwdWarningConfirm" class="cta" data-i18n="pwd_warning_confirm">I understand — encrypt</button>
+      </div>
+    </div>
+  </div>
+
   <script src="./loader.js"></script>
 </body>
 

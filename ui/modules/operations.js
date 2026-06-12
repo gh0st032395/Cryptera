@@ -13,6 +13,7 @@ import {
 } from "./password.js";
 import { logOperation } from "./history.js";
 import { renderMeta, getMetaLabels, resetDecryptAutoFillState } from "./metadata.js";
+import { confirmPasswordWarning } from "./warning.js";
 
 function resetPauseButton() {
   state.paused = false;
@@ -55,6 +56,8 @@ export async function handleEncrypt() {
     updatePasswordStrengthMeter(encPassword.value, $("encPasswordStrengthFill"), $("encPasswordStrengthText"), $("encPasswordFeedback"));
     return;
   }
+  // One-time irreversibility warning: no recovery exists for lost passwords.
+  if (!(await confirmPasswordWarning())) return;
   setBusy(true);
   setProgress(0);
   setStatus(t("status_encrypting"), "info");
