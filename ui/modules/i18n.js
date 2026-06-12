@@ -112,6 +112,7 @@ export const translations = {
         meta_type_archive: "Archive (Folder)",
         meta_type_file: "Single File",
         meta_hidden_filename: "(hidden)",
+        meta_encrypted_filename: "(encrypted — shown after decrypt/verify)",
         meta_label_type: "Type",
         meta_label_filename: "Filename",
         meta_label_version: "Version",
@@ -147,7 +148,7 @@ export const translations = {
         tooltip_folder_comp_xz: "XZ/LZMA compression. Maximum reduction, higher CPU usage.",
         tooltip_skip_special: "Prevents errors by skipping symbolic links, sockets, and device nodes.",
         tooltip_enable_pwchk: "Stores a hash in the header to confirm password correctness instantly before decryption.",
-        tooltip_hide_filename: "Prevents storing the original filename in the header. You will need to rename the decrypted file manually.",
+        tooltip_hide_filename: "Do not store the filename at all (since format v5 the stored filename is already encrypted). You will need to rename the decrypted file manually.",
         // Theme toggle
         theme_dark: "Dark",
         theme_light: "Light",
@@ -314,6 +315,7 @@ export const translations = {
         meta_type_archive: "Archivio (Cartella)",
         meta_type_file: "File singolo",
         meta_hidden_filename: "(nascosto)",
+        meta_encrypted_filename: "(cifrato — visibile dopo decifratura/verifica)",
         meta_label_type: "Tipo",
         meta_label_filename: "Nome file",
         meta_label_version: "Versione",
@@ -349,7 +351,7 @@ export const translations = {
         tooltip_folder_comp_xz: "Compressione XZ/LZMA. Riduzione massima, uso CPU più alto.",
         tooltip_skip_special: "Previene errori saltando link simbolici, socket e nodi di dispositivo.",
         tooltip_enable_pwchk: "Memorizza un hash nell'header per confermare istantaneamente la password prima della decifratura.",
-        tooltip_hide_filename: "Non include il nome originale nell'header cifrato. Il file decifrato dovrà essere rinominato a mano.",
+        tooltip_hide_filename: "Non memorizza affatto il nome file (dal formato v5 il nome memorizzato è comunque cifrato). Il file decifrato dovrà essere rinominato a mano.",
         // Theme toggle
         theme_dark: "Scuro",
         theme_light: "Chiaro",

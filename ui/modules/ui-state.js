@@ -1,5 +1,5 @@
 // ui-state.js - UI state management and rendering
-import { META_FLAG_TAR_CONTAINER } from "./dom.js";
+import { META_FLAG_TAR_CONTAINER, META_FLAG_ENC_FILENAME } from "./dom.js";
 
 export const state = {
     busy: false,
@@ -73,6 +73,7 @@ export function renderMetaTo(target, meta, labels = {}) {
     const typeArchive = labels.typeArchive || "Archive (Folder)";
     const typeFile = labels.typeFile || "Single File";
     const hiddenName = labels.hiddenName || "(hidden)";
+    const encryptedName = labels.encryptedName || "(encrypted — shown after decrypt/verify)";
     const typeLabel = labels.typeLabel || "Type";
     const filenameLabel = labels.filenameLabel || "Filename";
     const versionLabel = labels.versionLabel || "Version";
@@ -100,8 +101,14 @@ export function renderMetaTo(target, meta, labels = {}) {
         return div;
     };
 
+    // v5 stores the filename encrypted: without the key it is opaque,
+    // not absent.
+    const filenameEncrypted = (meta.flags & META_FLAG_ENC_FILENAME) !== 0;
+    const filenameValue = meta.filename
+        || (filenameEncrypted ? encryptedName : hiddenName);
+
     target.appendChild(createLine(typeLabel, typeValue));
-    target.appendChild(createLine(filenameLabel, meta.filename || hiddenName));
+    target.appendChild(createLine(filenameLabel, filenameValue));
     target.appendChild(createLine(versionLabel, meta.version));
     target.appendChild(createLine(shardLabel, `${meta.shard_size} bytes`));
     target.appendChild(createLine(krLabel, `${meta.k} / ${meta.r}`));

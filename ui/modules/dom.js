@@ -17,6 +17,7 @@ export function escapeHtml(value) {
 
 /** Header flag bits mirrored from src/lib.rs (HDR_FLAG_*). */
 export const META_FLAG_TAR_CONTAINER = 0x20;
+export const META_FLAG_ENC_FILENAME = 0x40;
 
 /** Shorthand for document.getElementById. */
 export function $(id) {

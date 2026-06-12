@@ -10,6 +10,7 @@ export function getMetaLabels() {
     typeArchive: t("meta_type_archive"),
     typeFile: t("meta_type_file"),
     hiddenName: t("meta_hidden_filename"),
+    encryptedName: t("meta_encrypted_filename"),
     typeLabel: t("meta_label_type"),
     filenameLabel: t("meta_label_filename"),
     versionLabel: t("meta_label_version"),
