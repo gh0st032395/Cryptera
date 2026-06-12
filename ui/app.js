@@ -180,6 +180,50 @@ function meetsEncryptionPasswordPolicy(assessment) {
   return assessment.length >= 10 && assessment.level >= 2;
 }
 
+// ── Password hygiene ──────────────────────────────────────────────────────────
+const PASSWORD_FIELD_IDS = [
+  "encPassword", "decPassword", "verPassword", "batchPassword",
+];
+const PASSWORD_AUTO_CLEAR_MS = 5 * 60 * 1000;
+let _pwdAutoClearTimer = null;
+
+function isCancelledError(err) {
+  if (err && typeof err === "object" && err.code === "CANCELLED") return true;
+  return String(err || "").toLowerCase().includes("cancelled");
+}
+
+function clearPasswordFields(...inputs) {
+  inputs.forEach((el) => {
+    if (el) el.value = "";
+  });
+  refreshPasswordStrengthMeters();
+}
+
+function clearAllPasswordFields() {
+  clearPasswordFields(
+    ...PASSWORD_FIELD_IDS.map((id) => document.getElementById(id)),
+  );
+}
+
+function schedulePasswordAutoClear() {
+  if (_pwdAutoClearTimer) clearTimeout(_pwdAutoClearTimer);
+  _pwdAutoClearTimer = setTimeout(() => {
+    _pwdAutoClearTimer = null;
+    if (state.busy) {
+      schedulePasswordAutoClear();
+      return;
+    }
+    clearAllPasswordFields();
+  }, PASSWORD_AUTO_CLEAR_MS);
+}
+
+function bindPasswordAutoClear() {
+  PASSWORD_FIELD_IDS.forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener("input", schedulePasswordAutoClear);
+  });
+}
+
 function updatePasswordStrengthMeter(password, fillEl, textEl, feedbackEl) {
   if (!fillEl || !textEl) return;
   const assessment = assessPasswordStrength(password);
@@ -435,6 +479,7 @@ async function handleBatchDecrypt() {
   setBusy(true);
   let successCount = 0;
   let errorCount = 0;
+  let sawCancelled = false;
   const t0 = Date.now();
 
   for (let i = 0; i < _batchFiles.length; i++) {
@@ -465,6 +510,7 @@ async function handleBatchDecrypt() {
       successCount++;
       logOperation("batch", item.path, true, Date.now() - itemT0);
     } catch (err) {
+      if (isCancelledError(err)) sawCancelled = true;
       item.status = "error";
       item.error = mapErrorToUserFeedback("decrypt", err).message;
       errorCount++;
@@ -473,6 +519,7 @@ async function handleBatchDecrypt() {
     renderBatchList();
   }
 
+  if (!sawCancelled) clearPasswordFields(batchPassword);
   setProgress(1);
   setBusy(false);
 
@@ -752,15 +799,18 @@ async function handleEncrypt() {
   };
 
   const t0 = Date.now();
+  let cancelled = false;
   try {
     await invoke("encrypt", { req: payload });
     logOperation("encrypt", payload.input_file || payload.input_folder, true, Date.now() - t0);
   } catch (err) {
+    cancelled = isCancelledError(err);
     logOperation("encrypt", payload.input_file || payload.input_folder, false, Date.now() - t0);
     const feedback = mapErrorToUserFeedback("encrypt", err);
     setStatus(feedback.message, feedback.level);
     console.error("encrypt error:", err);
   } finally {
+    if (!cancelled) clearPasswordFields(encPassword);
     setBusy(false);
     state.paused = false;
     if (pauseBtn) pauseBtn.textContent = "Pause";
@@ -783,16 +833,19 @@ async function handleDecrypt() {
   };
 
   const t0 = Date.now();
+  let cancelled = false;
   try {
     const result = await invoke("decrypt", { req: payload });
     logOperation("decrypt", payload.input_file, true, Date.now() - t0);
     if (result && result.meta) renderMeta(result.meta);
   } catch (err) {
+    cancelled = isCancelledError(err);
     logOperation("decrypt", payload.input_file, false, Date.now() - t0);
     const feedback = mapErrorToUserFeedback("decrypt", err);
     setStatus(feedback.message, feedback.level);
     console.error("decrypt error:", err);
   } finally {
+    if (!cancelled) clearPasswordFields(decPassword);
     setBusy(false);
     state.paused = false;
     if (pauseBtn) pauseBtn.textContent = "Pause";
@@ -815,18 +868,21 @@ async function handleVerify() {
   };
 
   const t0 = Date.now();
+  let cancelled = false;
   try {
     const result = await invoke("verify", { req: payload });
     logOperation("verify", payload.input_file, true, Date.now() - t0);
     // Show meta details — result may be MetaInfo directly or null
     showVerifyResult(true, result && result.meta ? result.meta : result);
   } catch (err) {
+    cancelled = isCancelledError(err);
     logOperation("verify", payload.input_file, false, Date.now() - t0);
     showVerifyResult(false, null);
     const feedback = mapErrorToUserFeedback("verify", err);
     setStatus(feedback.message, feedback.level);
     console.error("verify error:", err);
   } finally {
+    if (!cancelled) clearPasswordFields(verPassword);
     setBusy(false);
     state.paused = false;
     if (pauseBtn) pauseBtn.textContent = "Pause";
@@ -1204,6 +1260,7 @@ function bootInit() {
     bindNavigation();
     bindWindowControls();
     bindEvents();
+    bindPasswordAutoClear();
     bindProgressEvents();
     setupTooltips();
     setupCustomSelects();
