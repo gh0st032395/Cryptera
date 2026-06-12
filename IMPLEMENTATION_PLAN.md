@@ -30,7 +30,7 @@
 | P3-5 | Idempotenza setup UI + Condvar per pausa | Bassa | ☑ `5b708d6` |
 | P3-6 | Riduzione allocazioni hot loop core | Bassa | ☑ `a8fd728` |
 | P3-7 | Allineamento README (compressioni) | Bassa | ☑ verificato: già corretto, nessuna modifica (vedi `d4e09a2`) |
-| P4-1 | Formato v5: filename cifrato nell'header | Opzionale | ☐ non iniziato (richiede bump MAJOR e fixture v4) |
+| P4-1 | Formato v5: filename cifrato nell'header | Opzionale | ☑ `9f2b20f` (core), `3e3b593` (UI), `7c7c0b3` (docs), `71fe703` (bump 2.0.0) |
 
 ### Note di implementazione (giugno 2026)
 
@@ -52,6 +52,16 @@
 - **P3-1**: unica variazione osservabile: il messaggio di verify per
   versione non supportata ora coincide con quello di decrypt
   ("Unsupported version N (max 4)"); codice errore invariato.
+- **P4-1 (completato, app 2.0.0 / header v5)**: fixture v4 generate e
+  committate PRIMA della modifica al writer (`tests/fixtures/`, commit
+  `b32ccff`) con test di compatibilità; record filename nell'header:
+  `ct_len(u16) || ct || tag`, nonce riservato `(0xFFFFFFFE, 0xFFFFFFFE)`,
+  AAD `ECF1-FNAME-V5`; `read_metadata` senza password mostra segnaposto,
+  decrypt/verify restituiscono il nome reale. Key-commitment per il pwchk
+  valutato e NON modificato: l'header auth tag (HMAC) è verificato prima
+  di ogni record GCM e già vincola il file a una sola chiave.
+  `FORMAT_SPEC.md` riscritto per v5 correggendo anche derive pre-esistenti
+  rispetto al codice (posizione auth tag, layout shard, AAD, trailer).
 
 Aggiornare questa tabella (☐ → ☑) man mano che i task vengono completati.
 
