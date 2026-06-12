@@ -27,7 +27,7 @@ use zeroize::Zeroizing;
 
 const MAGIC: &[u8; 4] = b"ECF1";
 const TRAILER: &[u8; 4] = b"ECCT";
-const VERSION_U8: u8 = 4;
+const VERSION_U8: u8 = 5;
 
 const ALG_AES_GCM: u8 = 1;
 const KDF_ARGON2ID: u8 = 1;
@@ -66,8 +66,19 @@ const MAX_BLOCKS_U32: u64 = 1u64 << 32;
 const HDR_FLAG_PWCHK: u8 = 0x01;
 const HDR_FLAG_COMPRESS_ZLIB: u8 = 0x02;
 const HDR_FLAG_COMPRESS_LZMA: u8 = 0x08;
+/// Legacy (v2-v4): filename stored in plaintext in the header body.
 const HDR_FLAG_HAS_FILENAME: u8 = 0x10;
 const HDR_FLAG_TAR_CONTAINER: u8 = 0x20;
+/// v5+: filename stored AES-256-GCM-encrypted in the header body.
+const HDR_FLAG_ENC_FILENAME: u8 = 0x40;
+
+/// Reserved (block, shard) nonce coordinates for the encrypted filename
+/// record. Data shards never reach shard index 0xFFFFFFFE (k+r <= 255) and
+/// the password-check record uses 0xFFFFFFFF/0xFFFFFFFF, so this nonce is
+/// unique under a given key/nonce_base.
+const FNAME_NONCE_SENTINEL: u32 = 0xFFFF_FFFE;
+const FNAME_AAD_CONTEXT: &[u8] = b"ECF1-FNAME-V5";
+const MAX_FILENAME_LEN: usize = 4096;
 
 const PWCHK_MAGIC: &[u8; 4] = b"PWCK";
 const PWCHK_PLAINTEXT_LEN: usize = 32;
@@ -265,19 +276,17 @@ fn write_header(
     t: u32,
     m: u32,
     p: u16,
-    filename: Option<&str>,
-) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>, u16, u32, [u8; 16], u32, u8), CoreError> {
-    let mut salt = [0u8; 16];
-    OsRng.fill_bytes(&mut salt);
-    let nonce_base = OsRng.next_u32();
-
+    salt: &[u8; 16],
+    nonce_base: u32,
+    enc_filename: Option<&[u8]>,
+) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>, u16, u32), CoreError> {
     let mut hdr = Vec::with_capacity(128);
     hdr.write_u8(VERSION_U8).unwrap();
     hdr.write_u8(ALG_AES_GCM).unwrap();
     hdr.write_u8(KDF_ARGON2ID).unwrap();
     hdr.write_u8(CRC_CRC32).unwrap();
     hdr.write_u8(salt.len() as u8).unwrap();
-    hdr.extend_from_slice(&salt);
+    hdr.extend_from_slice(salt);
     hdr.write_u32::<BigEndian>(nonce_base).unwrap();
     hdr.write_u64::<BigEndian>(plain_size).unwrap();
     hdr.write_u64::<BigEndian>(stored_size).unwrap();
@@ -290,11 +299,18 @@ fn write_header(
     hdr.write_u8(TAG_LEN as u8).unwrap();
     hdr.write_u8(flags).unwrap();
 
-    if flags & HDR_FLAG_HAS_FILENAME != 0 {
-        let fname_bytes = filename.unwrap_or("").as_bytes();
-        hdr.write_u16::<BigEndian>(fname_bytes.len() as u16)
+    if flags & HDR_FLAG_ENC_FILENAME != 0 {
+        // Record layout: ct_len (u16, plaintext byte length) || ct || tag.
+        let rec = enc_filename.unwrap_or(&[]);
+        if rec.len() < TAG_LEN || rec.len() - TAG_LEN > MAX_FILENAME_LEN {
+            return Err(CoreError::new(
+                DECRYPT_HEADER_INVALID,
+                "Invalid encrypted filename record",
+            ));
+        }
+        hdr.write_u16::<BigEndian>((rec.len() - TAG_LEN) as u16)
             .unwrap();
-        hdr.extend_from_slice(fname_bytes);
+        hdr.extend_from_slice(rec);
     }
 
     if hdr.is_empty() || hdr.len() > MAX_HEADER_LEN {
@@ -320,16 +336,7 @@ fn write_header(
     trailer.write_u16::<BigEndian>(hdr_len).unwrap();
     trailer.extend_from_slice(TRAILER);
 
-    Ok((
-        start_header,
-        trailer,
-        prefix,
-        hdr_len,
-        hdr_crc,
-        salt,
-        nonce_base,
-        flags,
-    ))
+    Ok((start_header, trailer, prefix, hdr_len, hdr_crc))
 }
 #[derive(Debug, Clone)]
 struct HeaderParams {
@@ -347,6 +354,9 @@ struct HeaderParams {
     tag_len: u8,
     flags: u8,
     filename: String,
+    /// v5+: GCM ciphertext||tag of the filename, decrypted only once the
+    /// key is available (decrypt/verify); read_metadata leaves it opaque.
+    enc_filename: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone)]
@@ -529,17 +539,37 @@ fn parse_header(hdr: &[u8]) -> Result<HeaderParams, CoreError> {
         .map_err(|_| CoreError::new(DECRYPT_HEADER_INVALID, "Invalid header (flags)"))?;
 
     let mut filename = String::new();
-    let mut had_filename = false;
-    if version >= 3 {
-        if flags & HDR_FLAG_HAS_FILENAME != 0 {
+    let mut enc_filename: Option<Vec<u8>> = None;
+
+    if version >= 5 && flags & HDR_FLAG_ENC_FILENAME != 0 {
+        let ct_len = rdr
+            .read_u16::<BigEndian>()
+            .map_err(|_| CoreError::new(DECRYPT_HEADER_INVALID, "Invalid header (fname_ct_len)"))?
+            as usize;
+        let pos = rdr.position() as usize;
+        let total = ct_len + TAG_LEN;
+        if ct_len > MAX_FILENAME_LEN || pos + total > hdr.len() {
+            return Err(CoreError::new(
+                DECRYPT_HEADER_INVALID,
+                "Invalid header (encrypted filename record)",
+            ));
+        }
+        let mut rec = vec![0u8; total];
+        rdr.read_exact(&mut rec)
+            .map_err(|_| CoreError::new(DECRYPT_HEADER_INVALID, "Invalid header (fname_ct)"))?;
+        enc_filename = Some(rec);
+    } else {
+        // Legacy plaintext filename (v2 always, v3-v4 flag-gated).
+        let mut had_filename = false;
+        if version >= 3 {
+            if flags & HDR_FLAG_HAS_FILENAME != 0 {
+                had_filename = true;
+            }
+        } else if version == 2 {
             had_filename = true;
         }
-    } else if version == 2 {
-        had_filename = true;
-    }
 
-    if had_filename && (rdr.position() as usize + 2) <= hdr.len() {
-        {
+        if had_filename && (rdr.position() as usize + 2) <= hdr.len() {
             let fname_len = rdr.read_u16::<BigEndian>().map_err(|_| {
                 CoreError::new(DECRYPT_HEADER_INVALID, "Invalid header (fname_len)")
             })?;
@@ -569,6 +599,7 @@ fn parse_header(hdr: &[u8]) -> Result<HeaderParams, CoreError> {
         tag_len,
         flags,
         filename,
+        enc_filename,
     })
 }
 
@@ -1069,22 +1100,22 @@ pub fn encrypt_file_rs_controlled(
     }
 
     let filename_meta: Option<String> = match original_filename {
-        None => {
-            flags |= HDR_FLAG_HAS_FILENAME;
-            Some(
-                Path::new(input_file)
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string(),
-            )
-        }
+        None => Some(
+            Path::new(input_file)
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
+        ),
         Some("") => None,
-        Some(name) => {
-            flags |= HDR_FLAG_HAS_FILENAME;
-            Some(name.to_string())
-        }
+        Some(name) => Some(name.to_string()),
     };
+    if let Some(name) = filename_meta.as_deref() {
+        if name.len() > MAX_FILENAME_LEN {
+            return Err(CoreError::new(DECRYPT_HEADER_INVALID, "Filename too long"));
+        }
+        flags |= HDR_FLAG_ENC_FILENAME;
+    }
 
     let plain_size = fs::metadata(input_file)
         .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?
@@ -1165,19 +1196,11 @@ pub fn encrypt_file_rs_controlled(
         Some(num_blocks),
     )?;
 
-    let (start_header, base_trailer, prefix, _hdr_len, hdr_crc, salt, nonce_base, flags) =
-        write_header(
-            plain_size,
-            stored_size,
-            k,
-            r,
-            shard_size,
-            flags,
-            argon2_t,
-            argon2_m,
-            argon2_p,
-            filename_meta.as_deref(),
-        )?;
+    // The filename is encrypted into the header (v5), so the key must be
+    // derived before the header is built.
+    let mut salt = [0u8; 16];
+    OsRng.fill_bytes(&mut salt);
+    let nonce_base = OsRng.next_u32();
 
     let key = Zeroizing::new(derive_key(
         password,
@@ -1187,6 +1210,40 @@ pub fn encrypt_file_rs_controlled(
         argon2_p,
         keyfile_hash,
     )?);
+    let cipher = Aes256Gcm::new_from_slice(key.as_ref())
+        .map_err(|e| CoreError::new(DECRYPT_UNKNOWN_ERROR, e.to_string()))?;
+
+    let enc_fname: Option<Vec<u8>> = match filename_meta.as_deref() {
+        Some(name) => {
+            let nonce = nonce12(nonce_base, FNAME_NONCE_SENTINEL, FNAME_NONCE_SENTINEL);
+            let rec = cipher
+                .encrypt(
+                    Nonce::from_slice(&nonce),
+                    Payload {
+                        msg: name.as_bytes(),
+                        aad: FNAME_AAD_CONTEXT,
+                    },
+                )
+                .map_err(|_| CoreError::new(DECRYPT_UNKNOWN_ERROR, "Filename encryption failed"))?;
+            Some(rec)
+        }
+        None => None,
+    };
+
+    let (start_header, base_trailer, prefix, _hdr_len, hdr_crc) = write_header(
+        plain_size,
+        stored_size,
+        k,
+        r,
+        shard_size,
+        flags,
+        argon2_t,
+        argon2_m,
+        argon2_p,
+        &salt,
+        nonce_base,
+        enc_fname.as_deref(),
+    )?;
     let hdr_auth = header_auth_tag(key.as_ref(), &prefix, hdr_crc)?;
     let mut start_header = start_header;
     start_header.extend_from_slice(&hdr_auth);
@@ -1219,8 +1276,6 @@ pub fn encrypt_file_rs_controlled(
 
     if flags & HDR_FLAG_PWCHK != 0 {
         let nonce = nonce12(nonce_base, 0xFFFFFFFF, 0xFFFFFFFF);
-        let cipher = Aes256Gcm::new_from_slice(key.as_ref())
-            .map_err(|e| CoreError::new(DECRYPT_UNKNOWN_ERROR, e.to_string()))?;
         let ct = cipher
             .encrypt(
                 Nonce::from_slice(&nonce),
@@ -1245,8 +1300,6 @@ pub fn encrypt_file_rs_controlled(
     }
 
     let g = build_generator_matrix(k, r)?;
-    let cipher = Aes256Gcm::new_from_slice(key.as_ref())
-        .map_err(|e| CoreError::new(DECRYPT_UNKNOWN_ERROR, e.to_string()))?;
 
     let block_size_usize = block_size as usize;
     let shard_size_usize = shard_size as usize;
@@ -1509,6 +1562,31 @@ fn open_and_authenticate(
     verify_header_auth(params.version, key.as_ref(), &prefix, hdr_crc, hdr_auth)?;
     let cipher = Aes256Gcm::new_from_slice(key.as_ref())
         .map_err(|e| CoreError::new(DECRYPT_UNKNOWN_ERROR, e.to_string()))?;
+
+    let mut params = params;
+    if let Some(rec) = params.enc_filename.as_ref() {
+        let nonce = nonce12(
+            params.nonce_base,
+            FNAME_NONCE_SENTINEL,
+            FNAME_NONCE_SENTINEL,
+        );
+        let plain = cipher
+            .decrypt(
+                Nonce::from_slice(&nonce),
+                Payload {
+                    msg: rec.as_slice(),
+                    aad: FNAME_AAD_CONTEXT,
+                },
+            )
+            .map_err(|_| {
+                CoreError::new(
+                    DECRYPT_HEADER_AUTH_FAILED,
+                    "Filename authentication failed.",
+                )
+            })?;
+        params.filename = String::from_utf8(plain)
+            .map_err(|_| CoreError::new(DECRYPT_HEADER_INVALID, "Filename is not valid UTF-8."))?;
+    }
 
     if pwchk_present {
         control_wait(control)?;

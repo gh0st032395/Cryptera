@@ -42,7 +42,7 @@ fn roundtrip_encrypt_decrypt_verify_metadata() {
     );
 
     let meta = read_metadata_rs(enc.to_str().expect("utf8 path")).expect("metadata");
-    assert_eq!(meta.version, 4);
+    assert_eq!(meta.version, 5);
     assert_eq!(meta.k, 4);
     assert_eq!(meta.r, 2);
 
