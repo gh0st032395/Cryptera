@@ -1,4 +1,7 @@
 ﻿// i18n.js - Internationalization module
+import { state } from "./ui-state.js";
+import { syncSelectTriggers } from "./dom.js";
+
 export const translations = {
     en: {
         nav_encrypt: "Encrypt",
@@ -406,6 +409,19 @@ export const translations = {
     }
 };
 
+/** Translate a key in the currently selected language (falls back to the key itself). */
+export function t(key) {
+    const dict = translations[state.language] || translations.en;
+    return dict[key] || key;
+}
+
+const _languageListeners = [];
+
+/** Register a callback invoked after every language switch (e.g. to re-render dynamic text). */
+export function onLanguageChange(cb) {
+    _languageListeners.push(cb);
+}
+
 export function applyTranslations(lang) {
     const dict = translations[lang] || translations.en;
     document.querySelectorAll("[data-i18n]").forEach((el) => {
@@ -421,4 +437,11 @@ export function applyTranslations(lang) {
             el.setAttribute("data-tooltip", dict[key]);
         }
     });
+}
+
+export function updateLanguage(lang) {
+    state.language = lang;
+    applyTranslations(lang);
+    syncSelectTriggers();
+    _languageListeners.forEach((cb) => cb(lang));
 }
