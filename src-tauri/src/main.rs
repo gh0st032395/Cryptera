@@ -270,7 +270,9 @@ fn create_tar(
         .to_string();
     let tmp = NamedTempFile::new().map_err(|e| CmdError::new(ERR_IO, e.to_string()))?;
 
-    let file = tmp.reopen().map_err(|e| CmdError::new(ERR_IO, e.to_string()))?;
+    let file = tmp
+        .reopen()
+        .map_err(|e| CmdError::new(ERR_IO, e.to_string()))?;
     let writer: Box<dyn std::io::Write> = match comp {
         "gz" => Box::new(flate2::write::GzEncoder::new(
             file,
@@ -427,6 +429,49 @@ fn cancel_job(state: tauri::State<AppState>) -> Result<(), CmdError> {
     }
 }
 
+/// Shared scaffolding for the long-running commands: registers fresh
+/// control flags, runs `job` on a blocking thread, clears the active
+/// control and writes the audit entry (status + stable error code only).
+async fn run_operation<T, F>(
+    state: tauri::State<'_, AppState>,
+    audit_state: tauri::State<'_, AuditState>,
+    op_name: &'static str,
+    input_path: String,
+    job: F,
+) -> Result<T, CmdError>
+where
+    T: Send + 'static,
+    F: FnOnce(ControlFlags) -> Result<T, CmdError> + Send + 'static,
+{
+    let size_mb = audit::file_size_mb(&input_path);
+    let t0 = std::time::Instant::now();
+
+    let ctrl = ControlFlags::new();
+    set_active_control(&state, ctrl.clone())?;
+
+    let join_res = tauri::async_runtime::spawn_blocking(move || job(ctrl)).await;
+    let res: Result<T, CmdError> = match join_res {
+        Ok(inner) => inner,
+        Err(e) => Err(CmdError::new(ERR_UNKNOWN, e.to_string())),
+    };
+    clear_active_control(&state)?;
+
+    let entry = audit::AuditEntry {
+        ts: audit::unix_now(),
+        op: op_name.to_string(),
+        file: input_path,
+        size_mb,
+        duration_s: Some(t0.elapsed().as_secs_f64()),
+        status: if res.is_ok() { "OK" } else { "ERR" }.to_string(),
+        error: res.as_ref().err().map(|e| e.code.clone()),
+    };
+    if let Ok(logger) = audit_state.logger.lock() {
+        let _ = logger.log(&entry);
+    }
+
+    res
+}
+
 #[tauri::command]
 async fn encrypt(
     req: EncryptRequest,
@@ -461,14 +506,9 @@ async fn encrypt(
     } else {
         req.input_folder.clone()
     };
-    let size_mb = audit::file_size_mb(&input_path);
-    let t0 = std::time::Instant::now();
 
-    let ctrl = ControlFlags::new();
-    set_active_control(&state, ctrl.clone())?;
-
-    let window_clone = window.clone();
-    let join_res = tauri::async_runtime::spawn_blocking(move || -> Result<(), CmdError> {
+    run_operation(state, audit_state, "encrypt", input_path, move |ctrl| {
+        let window_clone = window;
         emit_status(&window_clone, "backend_enc_start", "Starting encryption...");
         let kf_hash = match req.keyfile_path.as_deref() {
             Some(p) => Some(get_keyfile_hash_rs(p).map_err(CmdError::from)?),
@@ -558,29 +598,7 @@ async fn encrypt(
         emit_status(&window_clone, "backend_enc_complete", "Encryption complete");
         Ok(())
     })
-    .await;
-
-    let res: Result<(), CmdError> = match join_res {
-        Ok(inner) => inner,
-        Err(e) => Err(CmdError::new(ERR_UNKNOWN, e.to_string())),
-    };
-    clear_active_control(&state)?;
-
-    // Write audit entry
-    let entry = audit::AuditEntry {
-        ts: audit::unix_now(),
-        op: "encrypt".to_string(),
-        file: input_path,
-        size_mb,
-        duration_s: Some(t0.elapsed().as_secs_f64()),
-        status: if res.is_ok() { "OK" } else { "ERR" }.to_string(),
-        error: res.as_ref().err().map(|e| e.code.clone()),
-    };
-    if let Ok(logger) = audit_state.logger.lock() {
-        let _ = logger.log(&entry);
-    }
-
-    res
+    .await
 }
 
 #[tauri::command]
@@ -613,100 +631,72 @@ async fn decrypt(
     }
 
     let input_path = req.input_file.clone();
-    let size_mb = audit::file_size_mb(&input_path);
-    let t0 = std::time::Instant::now();
 
-    let ctrl = ControlFlags::new();
-    set_active_control(&state, ctrl.clone())?;
-
-    let window_clone = window.clone();
-    let join_res =
-        tauri::async_runtime::spawn_blocking(move || -> Result<DecryptResult, CmdError> {
-            emit_status(&window_clone, "backend_dec_start", "Starting decryption...");
-            let kf_hash = match req.keyfile_path.as_deref() {
-                Some(p) => Some(get_keyfile_hash_rs(p).map_err(CmdError::from)?),
-                None => None,
-            };
-            if !req.extract {
-                let mut progress = |stage: &str, done: u64, total: u64| {
-                    emit_progress(&window_clone, stage, done, total);
-                };
-                // The core writes to an unpredictable NamedTempFile next to
-                // the output and renames it atomically.
-                let meta = decrypt_file_ex_rs_controlled(
-                    &req.input_file,
-                    &req.output_path,
-                    req.password.expose_secret(),
-                    kf_hash.as_deref(),
-                    Some(&ctrl),
-                    Some(&mut progress),
-                )
-                .map_err(CmdError::from)?;
-                emit_progress(&window_clone, "decrypt", 1, 1);
-                emit_status(&window_clone, "backend_dec_complete", "Decryption complete");
-                return Ok(DecryptResult {
-                    meta: Some(MetaInfoDto::from(meta)),
-                });
-            }
-
-            emit_status(
-                &window_clone,
-                "backend_dec_archive",
-                "Decrypting archive...",
-            );
-            let tmp_tar = NamedTempFile::new().map_err(|e| CmdError::new(ERR_IO, e.to_string()))?;
-            let tar_path = tmp_tar.path().to_string_lossy().to_string();
+    run_operation(state, audit_state, "decrypt", input_path, move |ctrl| {
+        let window_clone = window;
+        emit_status(&window_clone, "backend_dec_start", "Starting decryption...");
+        let kf_hash = match req.keyfile_path.as_deref() {
+            Some(p) => Some(get_keyfile_hash_rs(p).map_err(CmdError::from)?),
+            None => None,
+        };
+        if !req.extract {
             let mut progress = |stage: &str, done: u64, total: u64| {
                 emit_progress(&window_clone, stage, done, total);
             };
+            // The core writes to an unpredictable NamedTempFile next to
+            // the output and renames it atomically.
             let meta = decrypt_file_ex_rs_controlled(
                 &req.input_file,
-                &tar_path,
+                &req.output_path,
                 req.password.expose_secret(),
                 kf_hash.as_deref(),
                 Some(&ctrl),
                 Some(&mut progress),
             )
             .map_err(CmdError::from)?;
-
-            emit_status(&window_clone, "backend_dec_extract", "Extracting files...");
-            safe_extract_tar(&tar_path, &req.output_path)
-                .map_err(|e| CmdError::new(ERR_EXTRACT, e.to_string()))?;
-
-            if req.keep_tar {
-                let target = Path::new(&req.output_path).join("decrypted.tar");
-                let _ = std::fs::copy(&tar_path, target);
-            }
-
             emit_progress(&window_clone, "decrypt", 1, 1);
-            emit_status(&window_clone, "backend_dec_complete", "Extraction complete");
-            Ok(DecryptResult {
+            emit_status(&window_clone, "backend_dec_complete", "Decryption complete");
+            return Ok(DecryptResult {
                 meta: Some(MetaInfoDto::from(meta)),
-            })
+            });
+        }
+
+        emit_status(
+            &window_clone,
+            "backend_dec_archive",
+            "Decrypting archive...",
+        );
+        let tmp_tar = NamedTempFile::new().map_err(|e| CmdError::new(ERR_IO, e.to_string()))?;
+        let tar_path = tmp_tar.path().to_string_lossy().to_string();
+        let mut progress = |stage: &str, done: u64, total: u64| {
+            emit_progress(&window_clone, stage, done, total);
+        };
+        let meta = decrypt_file_ex_rs_controlled(
+            &req.input_file,
+            &tar_path,
+            req.password.expose_secret(),
+            kf_hash.as_deref(),
+            Some(&ctrl),
+            Some(&mut progress),
+        )
+        .map_err(CmdError::from)?;
+
+        emit_status(&window_clone, "backend_dec_extract", "Extracting files...");
+        safe_extract_tar(&tar_path, &req.output_path)
+            .map_err(|e| CmdError::new(ERR_EXTRACT, e.to_string()))?;
+
+        if req.keep_tar {
+            let target = Path::new(&req.output_path).join("decrypted.tar");
+            let _ = std::fs::copy(&tar_path, target);
+        }
+
+        emit_progress(&window_clone, "decrypt", 1, 1);
+        emit_status(&window_clone, "backend_dec_complete", "Extraction complete");
+        Ok(DecryptResult {
+            meta: Some(MetaInfoDto::from(meta)),
         })
-        .await;
-
-    let res: Result<DecryptResult, CmdError> = match join_res {
-        Ok(inner) => inner,
-        Err(e) => Err(CmdError::new(ERR_UNKNOWN, e.to_string())),
-    };
-    clear_active_control(&state)?;
-
-    // Write audit entry
-    let entry = audit::AuditEntry {
-        ts: audit::unix_now(),
-        op: "decrypt".to_string(),
-        file: input_path,
-        size_mb,
-        duration_s: Some(t0.elapsed().as_secs_f64()),
-        status: if res.is_ok() { "OK" } else { "ERR" }.to_string(),
-        error: res.as_ref().err().map(|e| e.code.clone()),
-    };
-    if let Ok(logger) = audit_state.logger.lock() {
-        let _ = logger.log(&entry);
-    }
-
-    res
+    })
+    .await
 }
 
 #[tauri::command]
@@ -724,59 +714,30 @@ async fn verify(
     }
 
     let input_path = req.input_file.clone();
-    let size_mb = audit::file_size_mb(&input_path);
-    let t0 = std::time::Instant::now();
 
-    let ctrl = ControlFlags::new();
-    set_active_control(&state, ctrl.clone())?;
-
-    let window_clone = window.clone();
-    let join_res =
-        tauri::async_runtime::spawn_blocking(move || -> Result<VerifyResult, CmdError> {
-            emit_status(&window_clone, "backend_verify_start", "Verifying...");
-            let kf_hash = match req.keyfile_path.as_deref() {
-                Some(p) => Some(get_keyfile_hash_rs(p).map_err(CmdError::from)?),
-                None => None,
-            };
-            let mut progress = |stage: &str, done: u64, total: u64| {
-                emit_progress(&window_clone, stage, done, total);
-            };
-            let meta = verify_file_integrity_rs_controlled(
-                &req.input_file,
-                req.password.expose_secret(),
-                kf_hash.as_deref(),
-                Some(&ctrl),
-                Some(&mut progress),
-            )
-            .map_err(CmdError::from)?;
-            emit_status(&window_clone, "backend_verify_ok", "Verification OK");
-            Ok(VerifyResult {
-                meta: MetaInfoDto::from(meta),
-            })
+    run_operation(state, audit_state, "verify", input_path, move |ctrl| {
+        emit_status(&window, "backend_verify_start", "Verifying...");
+        let kf_hash = match req.keyfile_path.as_deref() {
+            Some(p) => Some(get_keyfile_hash_rs(p).map_err(CmdError::from)?),
+            None => None,
+        };
+        let mut progress = |stage: &str, done: u64, total: u64| {
+            emit_progress(&window, stage, done, total);
+        };
+        let meta = verify_file_integrity_rs_controlled(
+            &req.input_file,
+            req.password.expose_secret(),
+            kf_hash.as_deref(),
+            Some(&ctrl),
+            Some(&mut progress),
+        )
+        .map_err(CmdError::from)?;
+        emit_status(&window, "backend_verify_ok", "Verification OK");
+        Ok(VerifyResult {
+            meta: MetaInfoDto::from(meta),
         })
-        .await;
-
-    let res: Result<VerifyResult, CmdError> = match join_res {
-        Ok(inner) => inner,
-        Err(e) => Err(CmdError::new(ERR_UNKNOWN, e.to_string())),
-    };
-    clear_active_control(&state)?;
-
-    // Write audit entry
-    let entry = audit::AuditEntry {
-        ts: audit::unix_now(),
-        op: "verify".to_string(),
-        file: input_path,
-        size_mb,
-        duration_s: Some(t0.elapsed().as_secs_f64()),
-        status: if res.is_ok() { "OK" } else { "ERR" }.to_string(),
-        error: res.as_ref().err().map(|e| e.code.clone()),
-    };
-    if let Ok(logger) = audit_state.logger.lock() {
-        let _ = logger.log(&entry);
-    }
-
-    res
+    })
+    .await
 }
 
 #[tauri::command]
