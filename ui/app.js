@@ -678,7 +678,10 @@ function bindEvents() {
   // Decrypt panel
   onClick("decFileBtn", async () => {
     await pickFile(decFile);
-    if (decFile.value) checkFileMetadata(decFile.value);
+    if (decFile.value) {
+      resetDecryptAutoFillState();
+      checkFileMetadata(decFile.value);
+    }
   });
   onClick("decOutputBtn", async () => {
     const currentVal = decOutput.value.trim();
@@ -773,6 +776,10 @@ function bindEvents() {
   });
 
   if (resetBtn) resetBtn.addEventListener("click", handleReset);
+
+  // Track manual edits so metadata auto-fill never overwrites user intent
+  if (decOutput) decOutput.addEventListener("input", () => { _decOutputDirty = true; });
+  if (decExtract) decExtract.addEventListener("change", () => { _decExtractDirty = true; });
 
   // Password meters
   if (encPassword) {
@@ -961,6 +968,7 @@ function handleReset() {
   if (decExtract) decExtract.checked = true;
   if (decKeepTar) decKeepTar.checked = false;
 
+  resetDecryptAutoFillState();
   if (metaContent) metaContent.textContent = t("meta_empty");
   if (verMetaContent) verMetaContent.textContent = t("meta_empty");
   const verResultBox = document.getElementById("verResultBox");
@@ -986,18 +994,33 @@ function handleReset() {
 }
 
 // ── File metadata helpers ─────────────────────────────────────────────────────
+// Guards against two issues when the user picks files in quick succession:
+// a stale read_metadata response rendering the wrong file's metadata
+// (request token), and auto-population overwriting fields the user already
+// edited by hand (dirty flags, reset whenever a new file is selected).
+let _metaRequestToken = 0;
+let _decOutputDirty = false;
+let _decExtractDirty = false;
+
+function resetDecryptAutoFillState() {
+  _decOutputDirty = false;
+  _decExtractDirty = false;
+}
+
 async function checkFileMetadata(path) {
   if (!invoke || !path) return;
+  const token = ++_metaRequestToken;
   try {
     const meta = await invoke("read_metadata", { req: { input_file: path } });
+    if (token !== _metaRequestToken) return; // stale response, a newer pick won
     if (meta) {
       renderMeta(meta);
       const isContainer = (meta.flags & 32) !== 0;
-      if (decExtract) {
+      if (decExtract && !_decExtractDirty) {
         decExtract.checked = isContainer;
         setStatus(isContainer ? t("status_detected_folder") : t("status_detected_file"), "info");
       }
-      if (decOutput) {
+      if (decOutput && !_decOutputDirty) {
         try {
           const sep = path.includes("\\") ? "\\" : "/";
           const dir = path.substring(0, path.lastIndexOf(sep));
@@ -1020,6 +1043,7 @@ async function checkFileMetadata(path) {
       }
     }
   } catch (err) {
+    if (token !== _metaRequestToken) return;
     console.error("Auto-detect failed:", err);
   }
 }
@@ -1060,6 +1084,7 @@ async function bindProgressEvents() {
         }
       } else if (activePanel.id === "panel-decrypt") {
         if (decFile) decFile.value = path;
+        resetDecryptAutoFillState();
         checkFileMetadata(path);
       } else if (activePanel.id === "panel-verify") {
         if (verFile) verFile.value = path;
