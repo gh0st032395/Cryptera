@@ -18,7 +18,7 @@ use std::io::{self, BufReader, BufWriter, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc,
+    Arc, Condvar, Mutex,
 };
 use std::time::Duration;
 use tempfile::NamedTempFile;
@@ -388,24 +388,76 @@ fn meta_from_params(params: &HeaderParams) -> MetaInfo {
     }
 }
 
+#[derive(Clone)]
 pub struct ControlFlags {
     pub cancel: Arc<AtomicBool>,
     pub pause: Arc<AtomicBool>,
+    notify: Arc<(Mutex<()>, Condvar)>,
+}
+
+impl Default for ControlFlags {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ControlFlags {
+    pub fn new() -> Self {
+        Self {
+            cancel: Arc::new(AtomicBool::new(false)),
+            pause: Arc::new(AtomicBool::new(false)),
+            notify: Arc::new((Mutex::new(()), Condvar::new())),
+        }
+    }
+
+    /// Pause or resume the running operation. Resuming (and cancelling)
+    /// wakes any thread blocked in `wait_if_paused`.
+    pub fn set_pause(&self, paused: bool) {
+        let (lock, cvar) = &*self.notify;
+        let _guard = lock.lock().unwrap_or_else(|p| p.into_inner());
+        self.pause.store(paused, Ordering::SeqCst);
+        if !paused {
+            cvar.notify_all();
+        }
+    }
+
+    pub fn request_cancel(&self) {
+        let (lock, cvar) = &*self.notify;
+        let _guard = lock.lock().unwrap_or_else(|p| p.into_inner());
+        self.cancel.store(true, Ordering::SeqCst);
+        cvar.notify_all();
+    }
+
+    /// Block while paused (event-driven, no busy-wait); error out if
+    /// cancelled before or during the pause.
+    pub fn wait_if_paused(&self) -> Result<(), CoreError> {
+        if self.cancel.load(Ordering::SeqCst) {
+            return Err(CoreError::new(DECRYPT_CANCELLED, "Operation cancelled."));
+        }
+        if !self.pause.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        let (lock, cvar) = &*self.notify;
+        let mut guard = lock.lock().unwrap_or_else(|p| p.into_inner());
+        while self.pause.load(Ordering::SeqCst) {
+            if self.cancel.load(Ordering::SeqCst) {
+                return Err(CoreError::new(DECRYPT_CANCELLED, "Operation cancelled."));
+            }
+            // Timeout as a safety net against missed wakeups.
+            let (g, _) = cvar
+                .wait_timeout(guard, Duration::from_millis(200))
+                .unwrap_or_else(|p| p.into_inner());
+            guard = g;
+        }
+        Ok(())
+    }
 }
 
 fn control_wait(control: Option<&ControlFlags>) -> Result<(), CoreError> {
-    if let Some(ctrl) = control {
-        if ctrl.cancel.load(Ordering::SeqCst) {
-            return Err(CoreError::new(DECRYPT_CANCELLED, "Operation cancelled."));
-        }
-        while ctrl.pause.load(Ordering::SeqCst) {
-            if ctrl.cancel.load(Ordering::SeqCst) {
-                return Err(CoreError::new(DECRYPT_CANCELLED, "Operation cancelled."));
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        }
+    match control {
+        Some(ctrl) => ctrl.wait_if_paused(),
+        None => Ok(()),
     }
-    Ok(())
 }
 
 fn progress_report(

@@ -15,7 +15,7 @@ import {
   updateMode,
   renderMetaTo,
 } from "./modules/ui-state.js";
-import { escapeHtml } from "./modules/dom.js";
+import { escapeHtml, META_FLAG_TAR_CONTAINER } from "./modules/dom.js";
 
 // ── Element refs ──────────────────────────────────────────────────────────────
 let pauseBtn = null;
@@ -1035,7 +1035,7 @@ async function checkFileMetadata(path) {
     if (token !== _metaRequestToken) return; // stale response, a newer pick won
     if (meta) {
       renderMeta(meta);
-      const isContainer = (meta.flags & 32) !== 0;
+      const isContainer = (meta.flags & META_FLAG_TAR_CONTAINER) !== 0;
       if (decExtract && !_decExtractDirty) {
         decExtract.checked = isContainer;
         setStatus(isContainer ? t("status_detected_folder") : t("status_detected_file"), "info");
@@ -1155,7 +1155,10 @@ async function bindProgressEvents() {
 }
 
 // ── Tooltips ──────────────────────────────────────────────────────────────────
+let _tooltipsSetup = false;
 function setupTooltips() {
+  if (_tooltipsSetup) return;
+  _tooltipsSetup = true;
   const tooltip = document.createElement("div");
   tooltip.className = "custom-tooltip";
   tooltip.style.display = "none";
@@ -1236,7 +1239,10 @@ function closeSelectWrapper(wrapper) {
   if (trigger) trigger.setAttribute("aria-expanded", "false");
 }
 
+let _selectsSetup = false;
 function setupCustomSelects() {
+  if (_selectsSetup) return;
+  _selectsSetup = true;
   document.addEventListener("click", (e) => {
     if (!e.target.closest(".custom-select")) {
       document.querySelectorAll(".custom-select.open").forEach(closeSelectWrapper);

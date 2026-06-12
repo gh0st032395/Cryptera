@@ -1,4 +1,6 @@
 // ui-state.js - UI state management and rendering
+import { META_FLAG_TAR_CONTAINER } from "./dom.js";
+
 export const state = {
     busy: false,
     paused: false,
@@ -84,7 +86,7 @@ export function renderMetaTo(target, meta, labels = {}) {
         target.textContent = noMetaText;
         return;
     }
-    const isContainer = (meta.flags & 32) !== 0;
+    const isContainer = (meta.flags & META_FLAG_TAR_CONTAINER) !== 0;
     const typeValue = isContainer ? typeArchive : typeFile;
 
     target.innerHTML = "";

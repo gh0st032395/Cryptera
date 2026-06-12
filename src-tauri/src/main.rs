@@ -4,8 +4,7 @@ mod audit;
 
 use secrecy::{ExposeSecret, Secret};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use crypto_core_rs::{
     decrypt_file_ex_rs_controlled, encrypt_file_rs_controlled, get_keyfile_hash_rs,
@@ -59,7 +58,6 @@ const ERR_OUTPUT_EXISTS: &str = "OUTPUT_EXISTS";
 const ERR_IO: &str = "IO_ERROR";
 const ERR_TAR: &str = "TAR_ERROR";
 const ERR_EXTRACT: &str = "EXTRACT_ERROR";
-const ERR_CANCELLED: &str = "CANCELLED";
 const ERR_STATE_LOCK: &str = "STATE_LOCK";
 const ERR_NO_ACTIVE_JOB: &str = "NO_ACTIVE_JOB";
 const ERR_UNKNOWN: &str = "UNKNOWN_ERROR";
@@ -291,15 +289,7 @@ fn create_tar(
 
     let mut count = 0;
     for entry in walkdir::WalkDir::new(folder).follow_links(false) {
-        if ctrl.cancel.load(Ordering::SeqCst) {
-            return Err(CmdError::new(ERR_CANCELLED, "Operation cancelled"));
-        }
-        while ctrl.pause.load(Ordering::SeqCst) {
-            if ctrl.cancel.load(Ordering::SeqCst) {
-                return Err(CmdError::new(ERR_CANCELLED, "Operation cancelled"));
-            }
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        }
+        ctrl.wait_if_paused().map_err(CmdError::from)?;
 
         count += 1;
         if count % 10 == 0 {
@@ -416,7 +406,7 @@ fn set_pause(pause: bool, state: tauri::State<AppState>) -> Result<(), CmdError>
         .lock()
         .map_err(|_| CmdError::new(ERR_STATE_LOCK, "State lock failed"))?;
     if let Some(ctrl) = guard.as_ref() {
-        ctrl.pause.store(pause, Ordering::SeqCst);
+        ctrl.set_pause(pause);
         Ok(())
     } else {
         Err(CmdError::new(ERR_NO_ACTIVE_JOB, "No active job"))
@@ -430,7 +420,7 @@ fn cancel_job(state: tauri::State<AppState>) -> Result<(), CmdError> {
         .lock()
         .map_err(|_| CmdError::new(ERR_STATE_LOCK, "State lock failed"))?;
     if let Some(ctrl) = guard.as_ref() {
-        ctrl.cancel.store(true, Ordering::SeqCst);
+        ctrl.request_cancel();
         Ok(())
     } else {
         Err(CmdError::new(ERR_NO_ACTIVE_JOB, "No active job"))
@@ -474,15 +464,8 @@ async fn encrypt(
     let size_mb = audit::file_size_mb(&input_path);
     let t0 = std::time::Instant::now();
 
-    let ctrl = ControlFlags {
-        cancel: Arc::new(AtomicBool::new(false)),
-        pause: Arc::new(AtomicBool::new(false)),
-    };
-    let ctrl_state = ControlFlags {
-        cancel: ctrl.cancel.clone(),
-        pause: ctrl.pause.clone(),
-    };
-    set_active_control(&state, ctrl_state)?;
+    let ctrl = ControlFlags::new();
+    set_active_control(&state, ctrl.clone())?;
 
     let window_clone = window.clone();
     let join_res = tauri::async_runtime::spawn_blocking(move || -> Result<(), CmdError> {
@@ -633,15 +616,8 @@ async fn decrypt(
     let size_mb = audit::file_size_mb(&input_path);
     let t0 = std::time::Instant::now();
 
-    let ctrl = ControlFlags {
-        cancel: Arc::new(AtomicBool::new(false)),
-        pause: Arc::new(AtomicBool::new(false)),
-    };
-    let ctrl_state = ControlFlags {
-        cancel: ctrl.cancel.clone(),
-        pause: ctrl.pause.clone(),
-    };
-    set_active_control(&state, ctrl_state)?;
+    let ctrl = ControlFlags::new();
+    set_active_control(&state, ctrl.clone())?;
 
     let window_clone = window.clone();
     let join_res =
@@ -751,15 +727,8 @@ async fn verify(
     let size_mb = audit::file_size_mb(&input_path);
     let t0 = std::time::Instant::now();
 
-    let ctrl = ControlFlags {
-        cancel: Arc::new(AtomicBool::new(false)),
-        pause: Arc::new(AtomicBool::new(false)),
-    };
-    let ctrl_state = ControlFlags {
-        cancel: ctrl.cancel.clone(),
-        pause: ctrl.pause.clone(),
-    };
-    set_active_control(&state, ctrl_state)?;
+    let ctrl = ControlFlags::new();
+    set_active_control(&state, ctrl.clone())?;
 
     let window_clone = window.clone();
     let join_res =
