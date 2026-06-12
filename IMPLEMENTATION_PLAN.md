@@ -14,23 +14,44 @@
 
 | ID | Task | Priorità | Stato |
 |----|------|----------|-------|
-| P1-1 | Escape dati attacker-controlled nella UI | Alta | ☐ |
-| P1-2 | Clear password dopo ogni operazione | Alta | ☐ |
-| P1-3 | Correzione README: filename NON cifrato | Alta | ☐ |
-| P1-4 | Sanitizzazione errori nel log audit | Alta | ☐ |
-| P2-1 | Errori strutturati `{code, message}` via IPC | Media | ☐ |
-| P2-2 | Fix race condition in `checkFileMetadata` | Media | ☐ |
-| P2-3 | Validazione file batch + fallback directory | Media | ☐ |
-| P2-4 | `NamedTempFile` nel backend Tauri | Media | ☐ |
-| P2-5 | Fix accessibilità (ARIA, tastiera, live region) | Media | ☐ |
-| P3-1 | Dedup `decrypt_internal`/`verify_internal` nel core | Bassa | ☐ |
-| P3-2 | Split `ui/app.js` in moduli feature | Bassa | ☐ |
-| P3-3 | Estrazione struttura comune comandi Tauri | Bassa | ☐ |
-| P3-4 | Test pause/cancel + formato audit | Bassa | ☐ |
-| P3-5 | Idempotenza setup UI + Condvar per pausa | Bassa | ☐ |
-| P3-6 | Riduzione allocazioni hot loop core | Bassa | ☐ |
-| P3-7 | Allineamento README (compressioni) | Bassa | ☐ |
-| P4-1 | Formato v5: filename cifrato nell'header | Opzionale | ☐ |
+| P1-1 | Escape dati attacker-controlled nella UI | Alta | ☑ `a5af03a` |
+| P1-2 | Clear password dopo ogni operazione | Alta | ☑ `f09ab60` |
+| P1-3 | Correzione README: filename NON cifrato | Alta | ☑ `d4e09a2` |
+| P1-4 | Sanitizzazione errori nel log audit | Alta | ☑ `8e33200` |
+| P2-1 | Errori strutturati `{code, message}` via IPC | Media | ☑ `673ff6c` |
+| P2-2 | Fix race condition in `checkFileMetadata` | Media | ☑ `e582da0` |
+| P2-3 | Validazione file batch + fallback directory | Media | ☑ `b018709` |
+| P2-4 | `NamedTempFile` nel backend Tauri | Media | ☑ `5d0e243` |
+| P2-5 | Fix accessibilità (ARIA, tastiera, live region) | Media | ☑ `325261f` |
+| P3-1 | Dedup `decrypt_internal`/`verify_internal` nel core | Bassa | ☑ `c086eec` |
+| P3-2 | Split `ui/app.js` in moduli feature | Bassa | ☑ `281cc55` |
+| P3-3 | Estrazione struttura comune comandi Tauri | Bassa | ☑ `4f3ac60` |
+| P3-4 | Test pause/cancel + formato audit | Bassa | ☑ `fc477d3` |
+| P3-5 | Idempotenza setup UI + Condvar per pausa | Bassa | ☑ `5b708d6` |
+| P3-6 | Riduzione allocazioni hot loop core | Bassa | ☑ `a8fd728` |
+| P3-7 | Allineamento README (compressioni) | Bassa | ☑ verificato: già corretto, nessuna modifica (vedi `d4e09a2`) |
+| P4-1 | Formato v5: filename cifrato nell'header | Opzionale | ☐ non iniziato (richiede bump MAJOR e fixture v4) |
+
+### Note di implementazione (giugno 2026)
+
+- **Ordine**: P2-1 è stato implementato prima di P1-4, che ne dipendeva
+  (con gli errori strutturati il logging del solo codice diventa banale).
+- **P2-4**: anziché aggiungere `NamedTempFile` nel backend, è stato rimosso
+  il livello `.tmp` ridondante — il core scrive già su `NamedTempFile`
+  nella directory di destinazione e fa rename atomico (`atomic_replace`).
+- **P3-2**: aggiunto `events.js` (listener progress/status) oltre ai moduli
+  previsti; `tooltip.js` esporta `attachTooltip` al posto del global
+  `window.attachTooltip`.
+- **P3-5**: la pausa usa `Condvar` con timeout di sicurezza 200ms;
+  `ControlFlags` ora espone `new()/set_pause()/request_cancel()/wait_if_paused()`
+  e deriva `Clone`.
+- **P3-6**: benchmark informale (100 MB, release, Argon2 ridotto):
+  ~1.1s encrypt / ~0.25s decrypt sia prima che dopo — differenza entro il
+  rumore di misura; il beneficio è la riduzione della pressione
+  sull'allocatore (~4 allocazioni per shard in meno).
+- **P3-1**: unica variazione osservabile: il messaggio di verify per
+  versione non supportata ora coincide con quello di decrypt
+  ("Unsupported version N (max 4)"); codice errore invariato.
 
 Aggiornare questa tabella (☐ → ☑) man mano che i task vengono completati.
 
