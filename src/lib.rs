@@ -890,8 +890,16 @@ fn fec_decode(
     gf_mat_mul(&a_inv, &avail_data)
 }
 
-fn write_crc_copies(w: &mut dyn Write, data: &[u8]) -> io::Result<()> {
-    let crc = crc32_bytes(data);
+/// CRC32 over the concatenation of two slices without allocating.
+fn crc32_two(a: &[u8], b: &[u8]) -> u32 {
+    let mut hasher = Crc32::new();
+    hasher.update(a);
+    hasher.update(b);
+    hasher.finalize()
+}
+
+fn write_crc_copies(w: &mut dyn Write, ct: &[u8], tag: &[u8]) -> io::Result<()> {
+    let crc = crc32_two(ct, tag);
     for _ in 0..CRC_COPIES {
         w.write_u32::<BigEndian>(crc)?;
     }
@@ -1226,7 +1234,7 @@ pub fn encrypt_file_rs_controlled(
         f_out
             .write_all(PWCHK_MAGIC)
             .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
-        write_crc_copies(&mut f_out, &[ct_body, tag].concat())
+        write_crc_copies(&mut f_out, ct_body, tag)
             .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
         f_out
             .write_all(ct_body)
@@ -1244,6 +1252,10 @@ pub fn encrypt_file_rs_controlled(
     let shard_size_usize = shard_size as usize;
     let m = (k + r) as usize;
     let mut block_buf = vec![0u8; block_size_usize];
+    // AAD = prefix || block_index || shard_index; the prefix part never
+    // changes, so reuse one buffer instead of allocating per shard.
+    let mut aad = Vec::with_capacity(prefix.len() + 8);
+    aad.extend_from_slice(&prefix);
 
     for block_index in 0..num_blocks {
         control_wait(control)?;
@@ -1275,12 +1287,9 @@ pub fn encrypt_file_rs_controlled(
         for shard_index in 0..m {
             let shard_plain = &coded[shard_index];
             let nonce = nonce12(nonce_base, block_index as u32, shard_index as u32);
-            let aad = [
-                prefix.as_slice(),
-                &(block_index as u32).to_be_bytes(),
-                &(shard_index as u32).to_be_bytes(),
-            ]
-            .concat();
+            aad.truncate(prefix.len());
+            aad.extend_from_slice(&(block_index as u32).to_be_bytes());
+            aad.extend_from_slice(&(shard_index as u32).to_be_bytes());
             let ct = cipher
                 .encrypt(
                     Nonce::from_slice(&nonce),
@@ -1291,7 +1300,7 @@ pub fn encrypt_file_rs_controlled(
                 )
                 .map_err(|_| CoreError::new(DECRYPT_UNKNOWN_ERROR, "Encrypt failed"))?;
             let (ct_body, tag) = ct.split_at(shard_size_usize);
-            write_crc_copies(&mut f_out, &[ct_body, tag].concat())
+            write_crc_copies(&mut f_out, ct_body, tag)
                 .map_err(|e| CoreError::new(DECRYPT_IO_ERROR, e.to_string()))?;
             f_out
                 .write_all(ct_body)
@@ -1574,6 +1583,12 @@ fn process_blocks(
     let m = k + r;
     let shard_size = params.shard_size as usize;
 
+    // Reusable per-shard buffers: AAD prefix never changes; `data` holds
+    // ciphertext||tag for the AEAD call.
+    let mut aad = Vec::with_capacity(prepared.prefix.len() + 8);
+    aad.extend_from_slice(&prepared.prefix);
+    let mut data = Vec::with_capacity(shard_size + params.tag_len as usize);
+
     for block_index in 0..num_blocks {
         control_wait(control)?;
         progress_report(&mut progress, stage, block_index, num_blocks);
@@ -1607,18 +1622,15 @@ fn process_blocks(
             let mut tag = vec![0u8; params.tag_len as usize];
             f_in.read_exact(&mut tag)
                 .map_err(|_| CoreError::new(DECRYPT_TRUNCATED, format!("File truncated at authentication tag (block {block_index}, shard {shard_index})")))?;
-            let crc_calc = crc32_bytes(&[ct.as_slice(), tag.as_slice()].concat());
+            let crc_calc = crc32_two(&ct, &tag);
             if !crcs.contains(&crc_calc) {
                 continue;
             }
             let nonce = nonce12(params.nonce_base, block_index as u32, shard_index as u32);
-            let aad = [
-                prepared.prefix.as_slice(),
-                &(block_index as u32).to_be_bytes(),
-                &(shard_index as u32).to_be_bytes(),
-            ]
-            .concat();
-            let mut data = Vec::with_capacity(shard_size + tag.len());
+            aad.truncate(prepared.prefix.len());
+            aad.extend_from_slice(&(block_index as u32).to_be_bytes());
+            aad.extend_from_slice(&(shard_index as u32).to_be_bytes());
+            data.clear();
             data.extend_from_slice(&ct);
             data.extend_from_slice(&tag);
             if let Ok(pt) = prepared.cipher.decrypt(
