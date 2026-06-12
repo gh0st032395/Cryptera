@@ -432,6 +432,29 @@ function showVerifyResult(success, meta) {
 const _batchFiles = [];
 let _batchSelectedIndex = -1;
 
+function isEcfFile(path) {
+  return /\.ecf$/i.test(String(path || "").trim());
+}
+
+/** Add paths to the batch queue, skipping duplicates and non-.ecf files. */
+function addBatchFiles(paths) {
+  const skipped = [];
+  paths.forEach((p) => {
+    if (!p) return;
+    if (!isEcfFile(p)) {
+      skipped.push(p);
+      return;
+    }
+    if (!_batchFiles.find((f) => f.path === p)) {
+      _batchFiles.push({ path: p, status: "pending" });
+    }
+  });
+  if (skipped.length > 0) {
+    setStatus(`${t("batch_invalid_file")}: ${skipped.map(basename).join(", ")}`, "warn");
+  }
+  renderBatchList();
+}
+
 function renderBatchList() {
   const listEl = document.getElementById("batchFileList");
   if (!listEl) return;
@@ -512,9 +535,9 @@ async function handleBatchDecrypt() {
     setStatus(`${i + 1}/${_batchFiles.length}: ${basename(item.path)}`, "info");
 
     const sep = item.path.includes("\\") ? "\\" : "/";
-    const dir = batchOutputFolder && batchOutputFolder.value.trim()
-      ? batchOutputFolder.value.trim()
-      : item.path.substring(0, item.path.lastIndexOf(sep));
+    const lastSep = item.path.lastIndexOf(sep);
+    const dir = (batchOutputFolder && batchOutputFolder.value.trim())
+      || (lastSep > 0 ? item.path.substring(0, lastSep) : ".");
 
     const payload = {
       input_file: item.path,
@@ -704,17 +727,10 @@ function bindEvents() {
   onClick("batchAddBtn", async () => {
     const result = await invoke("open_file_dialog", { multiple: true, filter: "ECF Files (*.ecf)" });
     if (Array.isArray(result)) {
-      result.forEach(path => {
-        if (!_batchFiles.find(f => f.path === path)) {
-          _batchFiles.push({ path, status: "pending" });
-        }
-      });
+      addBatchFiles(result);
     } else if (typeof result === "string" && result) {
-      if (!_batchFiles.find(f => f.path === result)) {
-        _batchFiles.push({ path: result, status: "pending" });
-      }
+      addBatchFiles([result]);
     }
-    renderBatchList();
   });
   onClick("batchRemoveBtn", () => {
     if (_batchSelectedIndex >= 0 && _batchSelectedIndex < _batchFiles.length) {
@@ -1090,13 +1106,8 @@ async function bindProgressEvents() {
         if (verFile) verFile.value = path;
         handleReadVerifyMeta();
       } else if (activePanel.id === "panel-batch") {
-        // Add all dropped files to batch queue
-        paths.forEach(p => {
-          if (!_batchFiles.find(f => f.path === p)) {
-            _batchFiles.push({ path: p, status: "pending" });
-          }
-        });
-        renderBatchList();
+        // Add all dropped files to batch queue (.ecf only)
+        addBatchFiles(paths);
       }
     };
 
