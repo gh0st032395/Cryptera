@@ -198,7 +198,8 @@ I file cifrati usano il formato header v4 (proprietario):
 │  Salt Argon2id (16 bytes)                           │
 │  Argon2 params (t, m, p)                            │
 │  Flags (compressione, container, hide-filename, ...) │
-│  Filename originale (opzionale, cifrato in header)  │
+│  Filename originale (opzionale, in chiaro,          │
+│    autenticato — NON cifrato)                       │
 │  Password check record (opzionale, HMAC del salt)   │
 │  N shard cifrati (AES-256-GCM)                      │
 │    → ognuno con nonce 12b + tag 16b + CRC32         │
@@ -209,6 +210,10 @@ I file cifrati usano il formato header v4 (proprietario):
 L'header è incluso come **AAD** in ogni operazione GCM: qualsiasi modifica
 all'header invalida l'autenticazione. Non esiste modalità "solo cifratura senza
 autenticazione".
+
+> **Nota privacy**: il nome file originale, se memorizzato, è leggibile da
+> chiunque apra il file `.ecf` (è autenticato ma non cifrato). Per non esporre
+> il nome, abilitare l'opzione **Hide original filename** in fase di cifratura.
 
 ---
 
