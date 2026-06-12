@@ -1,6 +1,6 @@
-# ECF1 File Format Specification — Header v4
+# ECF1 File Format Specification — Header v5
 
-> **Version:** 4 (current)  
+> **Version:** 5 (current)  
 > **Magic:** `ECF1`  
 > **Status:** Stable  
 > **Source of truth:** `src/lib.rs` constants block
@@ -16,14 +16,15 @@ Byte offsets listed are relative to the start of each section.
 2. [Start Header](#2-start-header)
 3. [Header Body](#3-header-body)
 4. [Flags Byte](#4-flags-byte)
-5. [Optional PWCHK Record](#5-optional-pwchk-record)
-6. [Header Authentication Tag](#6-header-authentication-tag)
-7. [Data & Parity Shards](#7-data--parity-shards)
-8. [End Trailer](#8-end-trailer)
-9. [Nonce Construction](#9-nonce-construction)
-10. [Key Derivation](#10-key-derivation)
-11. [Parameter Constraints](#11-parameter-constraints)
-12. [Version History](#12-version-history)
+5. [Encrypted Filename Record (v5)](#5-encrypted-filename-record-v5)
+6. [Optional PWCHK Record](#6-optional-pwchk-record)
+7. [Header Authentication Tag](#7-header-authentication-tag)
+8. [Data & Parity Shards](#8-data--parity-shards)
+9. [End Trailer](#9-end-trailer)
+10. [Nonce Construction](#10-nonce-construction)
+11. [Key Derivation](#11-key-derivation)
+12. [Parameter Constraints](#12-parameter-constraints)
+13. [Version History](#13-version-history)
 
 ---
 
@@ -32,21 +33,18 @@ Byte offsets listed are relative to the start of each section.
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │  START HEADER  (variable length)                                │
-│    Magic "ECF1" · hdr_len · Header Body · hdr_crc              │
+│    Magic "ECF1" · hdr_len · Header Body · hdr_crc               │
+│    · Header Auth Tag (16 bytes, v4+)                            │
 ├─────────────────────────────────────────────────────────────────┤
 │  PWCHK RECORD  (60 bytes, only if FLAG_PWCHK set)               │
 ├─────────────────────────────────────────────────────────────────┤
-│  HEADER AUTH TAG  (16 bytes)                                    │
-├─────────────────────────────────────────────────────────────────┤
-│  DATA SHARDS  (num_blocks × k shards)                           │
-│    Each shard: nonce(12) · ciphertext(shard_size) · tag(16)     │
-│                · crc32×2(8)                                     │
-├─────────────────────────────────────────────────────────────────┤
-│  PARITY SHARDS  (num_blocks × r shards)                         │
-│    Same per-shard layout as data shards                         │
+│  BLOCKS  (num_blocks × (k + r) shards, block by block)          │
+│    Each shard: crc32×2(8) · ciphertext(shard_size) · tag(16)    │
+│    Within a block: k data shards, then r parity shards          │
 ├─────────────────────────────────────────────────────────────────┤
 │  END TRAILER  (variable length)                                 │
-│    Header Body copy · hdr_crc · hdr_len · Magic "ECCT"         │
+│    Header Body copy · hdr_crc · Header Auth Tag (v4+)           │
+│    · hdr_len · Magic "ECCT"                                     │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -55,15 +53,18 @@ Byte offsets listed are relative to the start of each section.
 ## 2. Start Header
 
 ```
-Offset  Size  Type    Field
-──────  ────  ──────  ─────────────────────────────────────────────
-0       4     bytes   magic = 0x45 0x43 0x46 0x31  ("ECF1")
-4       2     u16 BE  hdr_len  — length of Header Body in bytes
-6       …     bytes   Header Body  (hdr_len bytes, see §3)
-6+hdr_len  4  u32 BE  hdr_crc  — CRC32 of (magic + hdr_len + Header Body)
+Offset      Size  Type    Field
+──────      ────  ──────  ─────────────────────────────────────────────
+0           4     bytes   magic = 0x45 0x43 0x46 0x31  ("ECF1")
+4           2     u16 BE  hdr_len  — length of Header Body in bytes
+6           …     bytes   Header Body  (hdr_len bytes, see §3)
+6+hdr_len   4     u32 BE  hdr_crc  — CRC32 of (magic + hdr_len + Header Body)
+10+hdr_len  16    bytes   header auth tag  (v4+, see §7)
 ```
 
-**Total start header size:** `10 + hdr_len` bytes minimum.
+**Total start header size:** `26 + hdr_len` bytes (v4+).  
+The byte range `[0 .. 6+hdr_len)` — magic, length and Header Body, **without**
+`hdr_crc` — is called the **header prefix** and is used as AAD base (see §8).
 
 ---
 
@@ -74,11 +75,11 @@ The Header Body is the byte range `[6 .. 6+hdr_len)` within the Start Header.
 ```
 Offset  Size  Type    Field
 ──────  ────  ──────  ─────────────────────────────────────────────
-0       1     u8      version     = 4  (current format version)
+0       1     u8      version     = 5  (current format version)
 1       1     u8      alg         = 1  (AES-256-GCM)
 2       1     u8      kdf         = 1  (Argon2id)
 3       1     u8      crc_type    = 1  (CRC32)
-4       1     u8      salt_len    = 16 (always 16 in v4)
+4       1     u8      salt_len    = 16 (always 16)
 5       16    bytes   salt        — random Argon2 salt (OsRng)
 21      4     u32 BE  nonce_base  — random per-file nonce seed (OsRng)
 25      8     u64 BE  plain_size  — original plaintext size (bytes, pre-compression)
@@ -92,136 +93,174 @@ Offset  Size  Type    Field
 59      1     u8      tag_len     = 16 (AES-GCM authentication tag length)
 60      1     u8      flags       — bitfield (see §4)
 
-[OPTIONAL — present only if FLAG_HAS_FILENAME (bit 4) is set]
+[v5 — present only if FLAG_ENC_FILENAME (bit 6) is set]
+61      2     u16 BE  fname_ct_len — byte length of the filename plaintext
+63      …     bytes   fname_ct     — AES-256-GCM ciphertext (fname_ct_len bytes)
+…       16    bytes   fname_tag    — GCM authentication tag (see §5)
+
+[legacy v2-v4 — present only if FLAG_HAS_FILENAME (bit 4) is set]
 61      2     u16 BE  fname_len   — byte length of UTF-8 filename
-63      …     UTF-8   filename    — original filename (fname_len bytes, no NUL)
+63      …     UTF-8   filename    — original filename, PLAINTEXT (no NUL)
 ```
 
 **Minimum header body size:** 61 bytes (no filename).  
-**Maximum header body size:** 8192 bytes (`MAX_HEADER_LEN`).
+**Maximum header body size:** 8192 bytes (`MAX_HEADER_LEN`).  
+**Maximum filename length:** 4096 bytes (`MAX_FILENAME_LEN`).
 
 ---
 
 ## 4. Flags Byte
 
-| Bit | Mask | Name                   | Meaning                                            |
-|-----|------|------------------------|----------------------------------------------------|
-| 0   | 0x01 | `FLAG_PWCHK`           | PWCHK password-check record follows header auth    |
-| 1   | 0x02 | `FLAG_COMPRESS_ZLIB`   | Plaintext was compressed with zlib before encrypt  |
-| 2   | 0x04 | *(reserved)*           | —                                                  |
-| 3   | 0x08 | `FLAG_COMPRESS_LZMA`   | Plaintext was compressed with LZMA2 before encrypt |
-| 4   | 0x10 | `FLAG_HAS_FILENAME`    | Filename field present in header body              |
-| 5   | 0x20 | `FLAG_TAR_CONTAINER`   | Payload is a TAR archive (folder encryption)       |
-| 6-7 | 0xC0 | *(reserved)*           | —                                                  |
+| Bit | Mask | Name                   | Meaning                                              |
+|-----|------|------------------------|------------------------------------------------------|
+| 0   | 0x01 | `FLAG_PWCHK`           | PWCHK password-check record follows the start header |
+| 1   | 0x02 | `FLAG_COMPRESS_ZLIB`   | Plaintext was compressed with zlib before encrypt    |
+| 2   | 0x04 | *(reserved)*           | —                                                    |
+| 3   | 0x08 | `FLAG_COMPRESS_LZMA`   | Plaintext was compressed with LZMA2 before encrypt   |
+| 4   | 0x10 | `FLAG_HAS_FILENAME`    | Legacy (v2-v4): plaintext filename in header body    |
+| 5   | 0x20 | `FLAG_TAR_CONTAINER`   | Payload is a TAR archive (folder encryption)         |
+| 6   | 0x40 | `FLAG_ENC_FILENAME`    | v5+: encrypted filename record in header body        |
+| 7   | 0x80 | *(reserved)*           | —                                                    |
 
-Flags 1 (`ZLIB`) and 3 (`LZMA`) are mutually exclusive. A reader receiving both set
-should return `HEADER_INVALID`.
+Flags 1 (`ZLIB`) and 3 (`LZMA`) are mutually exclusive. The v5 writer never sets
+`FLAG_HAS_FILENAME`; it stores the filename only via `FLAG_ENC_FILENAME`.
 
 ---
 
-## 5. Optional PWCHK Record
+## 5. Encrypted Filename Record (v5)
 
-Present immediately after the Start Header **only when** `FLAG_PWCHK` (0x01) is set.  
+Since v5 the original filename is stored **encrypted** inside the Header Body
+(layout in §3). Without the password the name is opaque; `read_metadata`
+returns an empty filename for such files, while decrypt/verify recover it after
+key derivation and header authentication.
+
+```
+ciphertext = AES-256-GCM-Encrypt(
+    key   = master_key,
+    nonce = nonce12(nonce_base, 0xFFFF_FFFE, 0xFFFF_FFFE),   // reserved, see §10
+    aad   = "ECF1-FNAME-V5",
+    msg   = filename_utf8_bytes
+)
+```
+
+The record's integrity is covered twice: by its own GCM tag and by the v4+
+header authentication tag (§7), which spans the entire Header Body.
+
+To not store any filename at all, the writer omits the record and leaves
+`FLAG_ENC_FILENAME` clear ("hide filename" option).
+
+---
+
+## 6. Optional PWCHK Record
+
+Present immediately after the Start Header (including the header auth tag)
+**only when** `FLAG_PWCHK` (0x01) is set.  
 Total size: **60 bytes**.
 
 ```
 Offset  Size  Type     Field
 ──────  ────  ───────  ──────────────────────────────────────────────────────
 0       4     bytes    pwchk_magic = 0x50 0x57 0x43 0x4B  ("PWCK")
-4       4     u32 BE   crc32_copy_1 — CRC32 of the 32-byte plaintext
+4       4     u32 BE   crc32_copy_1 — CRC32 of (ct || gcm_tag)
 8       4     u32 BE   crc32_copy_2 — same value (2× redundancy, CRC_COPIES=2)
-12      32    bytes    plaintext    = "ECF1-PASSWORD-CHECK-RECORD-000\x00\x00"
+12      32    bytes    ct           — AES-256-GCM ciphertext of the fixed
+                                      plaintext "ECF1-PASSWORD-CHECK-RECORD-000\x00\x00"
 44      16    bytes    gcm_tag      — AES-256-GCM authentication tag
-                                     nonce: nonce12(nonce_base, 0xFFFFFFFF, 0xFFFFFFFF)
-                                     aad:   full Start Header bytes (magic→hdr_crc)
+                                      nonce: nonce12(nonce_base, 0xFFFFFFFF, 0xFFFFFFFF)
+                                      aad:   header prefix (§2) || "PWCK"
 ```
 
-A reader with the wrong password will fail GCM tag verification here before
-attempting to derive the key and decrypt all shards, allowing fast rejection.
-This record is encrypted with the same derived key as the payload shards.
+After deriving the key, a reader with the wrong password fails GCM verification
+here and can reject the file before reading any shard. The record is encrypted
+with the same master key as the payload shards.
+
+> **Key-commitment note.** AES-GCM is not key-committing on its own, but the
+> v4+ header auth tag (§7) is an HMAC-SHA256 keyed by the derived key and is
+> verified **before** the PWCHK record is used, committing the file to a single
+> key. For this reason the PWCHK record intentionally remains GCM-based in v5.
 
 ---
 
-## 6. Header Authentication Tag
+## 7. Header Authentication Tag
 
-Present immediately after the PWCHK record (or immediately after the Start Header
-if `FLAG_PWCHK` is not set).  
+Part of the Start Header, immediately after `hdr_crc` (and duplicated in the
+trailer). Present for v4+.  
 Total size: **16 bytes**.
 
 ```
 Derivation:
   auth_key  = HMAC-SHA256(master_key, "ECF1-HEADER-AUTH-V1")[..32]
-  auth_tag  = HMAC-SHA256(auth_key,  start_header_bytes || hdr_crc_bytes)[..16]
+  auth_tag  = HMAC-SHA256(auth_key, header_prefix || hdr_crc_be)[..16]
 ```
 
 This tag cryptographically binds the header to the encryption key. Any header
-modification — including parameter tampering — will be detected before shard
-decryption begins.
+modification — including parameter tampering — is detected after key
+derivation and before any payload processing.
 
 ---
 
-## 7. Data & Parity Shards
+## 8. Data & Parity Shards
 
-The payload is split into **blocks**. Each block contains `k` data shards and `r`
-parity shards (Reed-Solomon over GF(256)).
+The payload is split into **blocks**. Each block contains `k` data shards and
+`r` parity shards (systematic Reed-Solomon over GF(256), primitive polynomial
+0x11D). Blocks are written sequentially; **within each block** the `k` data
+shards come first, followed by the `r` parity shards.
 
 ```
-num_blocks = ceil(stored_size / (k × shard_size))
+num_blocks = max(1, ceil(stored_size / (k × shard_size)))
 ```
 
-All data shards are emitted first (all blocks × k), followed by all parity shards
-(all blocks × r).
+The final block is zero-padded to full size; `stored_size` determines how many
+bytes of the last block are valid.
 
-**Per-shard layout (data shards):**
+**Per-shard layout (identical for data and parity shards):**
 
 ```
 Offset  Size         Type    Field
 ──────  ───────────  ──────  ──────────────────────────────────────────────────
-0       12           bytes   nonce   — see §9
-12      shard_size   bytes   ciphertext  (last shard of last block may be shorter)
-12+S    16           bytes   gcm_tag — AES-256-GCM authentication tag
-28+S    4            u32 BE  crc32_copy_1 — CRC32 of ciphertext bytes
-32+S    4            u32 BE  crc32_copy_2 — same (2× redundancy)
+0       4            u32 BE  crc32_copy_1 — CRC32 of (ciphertext || gcm_tag)
+4       4            u32 BE  crc32_copy_2 — same value (2× redundancy)
+8       shard_size   bytes   ciphertext   — always full shard_size bytes
+8+S     16           bytes   gcm_tag      — AES-256-GCM authentication tag
 
-where S = shard_size (or actual ciphertext length for the final partial shard)
+where S = shard_size
 ```
 
-**Per-shard layout (parity shards):**  
-Identical structure. The parity shard plaintext is the Reed-Solomon parity data;
-it is encrypted and tagged exactly like data shards.
+The nonce is **not stored**; it is derived (§10).
 
-**Associated Authenticated Data (AAD) for all shards:**
+**Associated Authenticated Data (AAD) for every shard:**
 ```
-aad = start_header_bytes  (magic + hdr_len + Header Body + hdr_crc)
+aad = header_prefix (§2) || block_index_be (u32) || shard_index_be (u32)
 ```
 
-This binding ensures shards cannot be mixed across different files or paired with
-a tampered header.
+This binds every shard to its file, its block and its position, so shards
+cannot be reordered, duplicated, or mixed across files.
 
 ---
 
-## 8. End Trailer
+## 9. End Trailer
 
-The trailer duplicates the header at the end of the file to allow partial-read
-recovery when the start is corrupted.
+The trailer duplicates the header at the end of the file to allow recovery
+when the start of the file is corrupted.
 
 ```
-Offset              Size      Type     Field
-──────              ────────  ───────  ──────────────────────────────────────
-0                   hdr_len   bytes    Header Body copy (identical to §3)
-hdr_len             4         u32 BE   hdr_crc  (same value as in Start Header)
-hdr_len + 4         2         u16 BE   hdr_len  (same value, for back-scanning)
-hdr_len + 6         4         bytes    trailer_magic = 0x45 0x43 0x43 0x54  ("ECCT")
+Offset           Size      Type     Field
+──────           ────────  ───────  ──────────────────────────────────────
+0                hdr_len   bytes    Header Body copy (identical to §3)
+hdr_len          4         u32 BE   hdr_crc  (same value as in Start Header)
+hdr_len + 4      16        bytes    header auth tag (v4+, same as §7)
+hdr_len + 20     2         u16 BE   hdr_len  (same value, for back-scanning)
+hdr_len + 22     4         bytes    trailer_magic = 0x45 0x43 0x43 0x54  ("ECCT")
 ```
 
-A reader can locate the trailer by seeking to `EOF − 10` and reading backward to
-find the `ECCT` magic.
+A reader locates the trailer by seeking to `EOF − 4` and matching the `ECCT`
+magic, then reading `hdr_len` from the preceding 2 bytes.
 
 ---
 
-## 9. Nonce Construction
+## 10. Nonce Construction
 
-Each AES-256-GCM shard uses a unique 96-bit (12-byte) nonce:
+Each AES-256-GCM operation uses a unique 96-bit (12-byte) nonce:
 
 ```
 nonce[0..4]  = nonce_base    (u32 BE) — random per-file seed
@@ -230,8 +269,16 @@ nonce[8..12] = shard_index   (u32 BE) — 0-based shard counter within block
                                         (data shards: 0..k, parity: k..k+r)
 ```
 
-**PWCHK nonce:** `nonce12(nonce_base, 0xFFFF_FFFF, 0xFFFF_FFFF)` — a reserved value
-that cannot collide with any data shard index.
+**Reserved sentinel coordinates** (cannot collide with shard nonces because
+`shard_index ≤ 254` for payload shards):
+
+| Record             | block field   | shard field   |
+|--------------------|---------------|---------------|
+| PWCHK (§6)         | `0xFFFF_FFFF` | `0xFFFF_FFFF` |
+| Filename (§5, v5+) | `0xFFFF_FFFE` | `0xFFFF_FFFE` |
+
+Nonce uniqueness across files is guaranteed by the per-file random salt: every
+file derives a distinct master key, so nonce reuse across files is harmless.
 
 **Maximum file size:**  
 With default `k=24`, `shard_size=16 KiB`:  
@@ -239,7 +286,7 @@ With default `k=24`, `shard_size=16 KiB`:
 
 ---
 
-## 10. Key Derivation
+## 11. Key Derivation
 
 ```
 Inputs:
@@ -268,13 +315,16 @@ Step 2 (KDF):
   )
 ```
 
-The `master_key` is used directly as the AES-256 key for all shards and the PWCHK
-record. A separate `auth_key` (§6) is derived from `master_key` via HMAC to avoid
-key reuse.
+Readers MUST validate all header parameters against §12 **before** running
+Argon2, so a malicious header cannot request unbounded KDF cost.
+
+The `master_key` is used directly as the AES-256 key for all shards, the PWCHK
+record and the encrypted filename record. A separate `auth_key` (§7) is derived
+from `master_key` via HMAC to avoid key reuse.
 
 ---
 
-## 11. Parameter Constraints
+## 12. Parameter Constraints
 
 | Parameter     | Min    | Max      | Default  | Unit |
 |---------------|--------|----------|----------|------|
@@ -288,26 +338,30 @@ key reuse.
 | `salt_len`    | 16     | 16       | 16       | bytes (fixed) |
 | `tag_len`     | 16     | 16       | 16       | bytes (fixed) |
 | Header Body   | —      | 8 192    | ~61      | bytes |
+| Filename      | —      | 4 096    | —        | bytes |
 
 A reader that encounters values outside these ranges MUST return
 `DECRYPT_PARAMS_OUT_OF_LIMITS` without attempting decryption.
 
 ---
 
-## 12. Version History
+## 13. Version History
 
 | Version | Changes |
 |---------|---------|
-| **v4** (current) | Header Auth Tag (HMAC binding key to header); `stored_size` field; LZMA2 compression flag; TAR container flag; filename length made u16 |
+| **v5** (current) | Filename stored AES-256-GCM-encrypted in the header (`FLAG_ENC_FILENAME`, reserved nonce `0xFFFFFFFE`); plaintext filename no longer written |
+| v4 | Header Auth Tag (HMAC binding key to header); `stored_size` field; LZMA2 compression flag; TAR container flag; filename length made u16 |
 | v3 | Dual `plain_size` / `stored_size` fields; decompression bomb limit; hide-filename flag |
 | v2 | Optional filename metadata; PWCHK optional record |
 | v1 | Initial format: single-size field, mandatory filename |
 
-Readers implementing v4 MUST be able to parse v3 headers by treating
+Readers implementing v5 MUST keep parsing the legacy plaintext filename of
+v2-v4 files (`FLAG_HAS_FILENAME`), MUST parse v3 headers by treating
 `stored_size == plain_size` when the v3 field is absent, and fall back to v2/v1
 by assuming no filename or PWCHK record.
 
 ---
 
-*This document is auto-maintained. For the normative reference, read `src/lib.rs`
-(constants block, `write_header`, `parse_header`, and `encrypt_file_ex`).*
+*This document is maintained by hand. For the normative reference, read
+`src/lib.rs` (constants block, `write_header`, `parse_header`,
+`open_and_authenticate` and `process_blocks`).*

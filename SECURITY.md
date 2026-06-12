@@ -205,24 +205,33 @@ operation. **This log may contain sensitive information** and is stored unencryp
 | Plain size (V3) | Original plaintext size (pre-comp) | **Reveals original size** |
 | Stored size (V3) | Compressed size (post-comp) | Reveals compression efficiency |
 | Compression flag | zlib/lzma/none | Reveals compression choice |
-| Filename (V2+) | Original filename | **Optional (Flag-based in V3)** |
+| Filename (V2-V4) | Original filename, **plaintext** | Legacy files only — see below |
+| Filename (V5+) | AES-256-GCM **encrypted** in header | Only the *presence* of a stored name is visible |
+
+**Filename privacy (V5+)**: since header v5 the original filename is encrypted
+with the master key (reserved nonce, dedicated AAD context) and is recoverable
+only with the correct password during decrypt/verify; `read_metadata` without a
+password shows it as opaque. Files created with v2-v4 writers keep their
+plaintext filename until re-encrypted. The "Hide original filename" option
+still allows storing no name at all.
 
 ### Evolution Strategy
 
 1. **Versioning**:
-   - **Version 3 (Current)**: Supports dual size fields and flag-based metadata.
+   - **Version 5 (Current)**: encrypted filename record; supports dual size fields and flag-based metadata.
    - **Major changes** (e.g. new algorithms, header layout change) increment VERSION.
 2. **Extensions (Future)**:
    - For optional metadata, use the area after the primary fields.
    - Prefer adding flags to `flags` byte before blindly appending data.
-   - Readers should check VERSION; V3 readers can fall back to reading V1/V2 by assuming `plain_size == stored_size`.
+   - Readers should check VERSION; V5 readers keep parsing the plaintext filename of v2-v4 files and fall back to reading V1/V2 by assuming `plain_size == stored_size`.
 
 ### DoS Protection (V3+)
 - **Decompression Limit**: Encrypted files now store `Plain Size`. The decompressor strictly enforces this limit to prevent "Decompression Bomb" attacks. Decrypt builds will fail if they attempt to write more than the expected plaintext size.
 
 **Mitigation:**
-- Use "Hide original filename" checkbox for privacy
-- Metadata leakage is by design (needed for decryption parameter recovery)
+- The filename is encrypted by default since header v5; use "Hide original
+  filename" to store no name at all
+- Remaining metadata leakage is by design (needed for decryption parameter recovery)
 - Consider encrypting file inside encrypted container if metadata privacy critical
 
 ### Traffic Analysis
@@ -325,7 +334,18 @@ If you suspect a security vulnerability:
 
 ## Changelog
 
-### App v1.1.0 / Header v4 (current)
+### App v2.0.0 / Header v5 (current)
+- **Encrypted filename**: the original filename is stored AES-256-GCM-encrypted
+  in the header (`FLAG_ENC_FILENAME`, reserved nonce `0xFFFFFFFE`, dedicated AAD
+  context). Plaintext filenames are no longer written; v1-v4 files remain readable.
+- Key-commitment evaluated for the PWCHK record: not needed — the v4+ header
+  auth tag (HMAC-SHA256 keyed by the derived key) is verified before any GCM
+  record and already commits the file to a single key.
+- Structured `{code, message}` errors across the IPC boundary; audit log stores
+  stable error codes only (no raw messages/paths).
+- Event-driven pause/cancel (Condvar) in the crypto core.
+
+### App v1.1.0 / Header v4
 - Header Authentication Tag: HMAC binding between key and header (anti-tampering).
 - `stored_size` field: accurate decompression limit enforcement.
 - LZMA2 compression flag.

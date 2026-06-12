@@ -59,7 +59,7 @@ costruita su un core crittografico in Rust e un'interfaccia grafica Tauri + Web.
 │   Tray icon · Audit JSONL · ControlFlags (cancel/pause)  │
 ├──────────────────────────────────────────────────────────┤
 │   Crypto Core  (src/ — crypto_core_rs)                   │
-│   AES-256-GCM · Argon2id · Reed-Solomon · Header v4      │
+│   AES-256-GCM · Argon2id · Reed-Solomon · Header v5      │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -190,19 +190,20 @@ finestra. Per chiudere definitivamente: menu tray → **Quit**.
 
 ## Formato dei file `.ecf`
 
-I file cifrati usano il formato header v4 (proprietario):
+I file cifrati usano il formato header v5 (proprietario):
 
 ```
 ┌─────────────────────────────────────────────────────┐
 │  Magic + Version (4 bytes)                          │
 │  Salt Argon2id (16 bytes)                           │
 │  Argon2 params (t, m, p)                            │
-│  Flags (compressione, container, hide-filename, ...) │
-│  Filename originale (opzionale, in chiaro,          │
-│    autenticato — NON cifrato)                       │
-│  Password check record (opzionale, HMAC del salt)   │
+│  Flags (compressione, container, enc-filename, ...) │
+│  Filename originale (opzionale, CIFRATO AES-GCM     │
+│    nell'header — v5; in chiaro nei file v2–v4)      │
+│  Header auth tag (HMAC, lega header e chiave)       │
+│  Password check record (opzionale, AES-GCM)         │
 │  N shard cifrati (AES-256-GCM)                      │
-│    → ognuno con nonce 12b + tag 16b + CRC32         │
+│    → ognuno con CRC32×2 + tag 16b (nonce derivato)  │
 │  R shard di parità Reed-Solomon                     │
 └─────────────────────────────────────────────────────┘
 ```
@@ -211,9 +212,12 @@ L'header è incluso come **AAD** in ogni operazione GCM: qualsiasi modifica
 all'header invalida l'autenticazione. Non esiste modalità "solo cifratura senza
 autenticazione".
 
-> **Nota privacy**: il nome file originale, se memorizzato, è leggibile da
-> chiunque apra il file `.ecf` (è autenticato ma non cifrato). Per non esporre
-> il nome, abilitare l'opzione **Hide original filename** in fase di cifratura.
+> **Nota privacy**: dal formato v5 il nome file originale, se memorizzato, è
+> cifrato nell'header ed è leggibile solo con la password corretta (i metadati
+> senza password mostrano un segnaposto). I file creati con versioni
+> precedenti (v2–v4) conservano il nome in chiaro finché non vengono
+> ri-cifrati. Per non memorizzare alcun nome, abilitare l'opzione
+> **Hide original filename** in fase di cifratura.
 
 ---
 
