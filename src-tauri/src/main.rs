@@ -751,6 +751,16 @@ async fn verify(
     .await
 }
 
+/// File passed on the command line (double-click on an .ecf file once the
+/// file association is installed). macOS delivers opened files through
+/// RunEvent::Opened instead of argv; see main().
+#[tauri::command]
+fn get_launch_file() -> Option<String> {
+    std::env::args()
+        .nth(1)
+        .filter(|arg| arg.to_lowercase().ends_with(".ecf") && Path::new(arg).is_file())
+}
+
 #[tauri::command]
 fn read_metadata(req: MetadataRequest) -> Result<MetaInfoDto, CmdError> {
     if req.input_file.is_empty() {
@@ -969,6 +979,7 @@ fn main() {
             decrypt,
             verify,
             read_metadata,
+            get_launch_file,
             set_pause,
             cancel_job,
             open_file_dialog,
@@ -977,8 +988,26 @@ fn main() {
             get_audit_log,
             clear_audit_log,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app_handle, _event| {
+            // macOS delivers files opened via Finder/file association as
+            // RunEvent::Opened (argv is not used there).
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Opened { urls } = _event {
+                let paths: Vec<String> = urls
+                    .iter()
+                    .filter_map(|u| u.to_file_path().ok())
+                    .map(|p| p.to_string_lossy().to_string())
+                    .filter(|p| p.to_lowercase().ends_with(".ecf"))
+                    .collect();
+                if !paths.is_empty() {
+                    if let Some(win) = _app_handle.get_webview_window("main") {
+                        let _ = win.emit("launch-file", paths);
+                    }
+                }
+            }
+        });
 }
 
 #[cfg(test)]

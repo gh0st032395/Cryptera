@@ -221,6 +221,35 @@ function assertBackendApi() {
   return true;
 }
 
+// ── Launch file (.ecf opened via file association) ───────────────────────────
+function openDecryptWith(path) {
+  const decFile = $("decFile");
+  if (!decFile || !path) return;
+  decFile.value = path;
+  resetDecryptAutoFillState();
+  checkFileMetadata(path);
+  const tab = document.querySelector('.nav-item[data-tab="decrypt"]');
+  if (tab) tab.click();
+}
+
+async function applyLaunchFile() {
+  if (!invoke) return;
+  try {
+    // Windows/Linux: path arrives as a command-line argument.
+    const path = await invoke("get_launch_file");
+    if (path) openDecryptWith(path);
+  } catch (err) {
+    console.error("launch file:", err);
+  }
+  // macOS: paths arrive as a runtime event from RunEvent::Opened.
+  if (eventApi && eventApi.listen) {
+    await eventApi.listen("launch-file", (e) => {
+      const p = Array.isArray(e?.payload) ? e.payload[0] : e?.payload;
+      if (p) openDecryptWith(p);
+    });
+  }
+}
+
 // ── Boot ──────────────────────────────────────────────────────────────────────
 function bootInit() {
   try {
@@ -245,6 +274,7 @@ function bootInit() {
     setProgress(0);
     setBusy(false);
     setStatus(t("status_ready"), "success");
+    applyLaunchFile().catch((err) => console.error(err));
   } catch (err) {
     setStatus(`${t("status_init_error_prefix")}: ${errorToText(err)}`, "error");
     console.error(err);
