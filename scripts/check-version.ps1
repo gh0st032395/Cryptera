@@ -27,4 +27,9 @@ if ($cfg.version -ne $version) {
   throw "src-tauri/tauri.conf.json version does not match VERSION=$version"
 }
 
+$pkg = Get-Content package.json -Raw | ConvertFrom-Json
+if ($pkg.version -ne $version) {
+  throw "package.json version does not match VERSION=$version"
+}
+
 Write-Host "Version check OK: $version"

@@ -1,0 +1,137 @@
+name: Release
+
+# Builds installers for Windows, macOS and Linux when a version tag is
+# pushed, attaches them to a DRAFT GitHub release together with a
+# SHA256SUMS.txt file. The release must be reviewed and published by hand.
+#
+# Code signing is intentionally not configured yet; when certificates are
+# available, add the platform signing env vars to the build job.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  RELEASE_TAG: ${{ github.ref_name }}
+
+jobs:
+  verify:
+    name: Verify versions and create draft release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check version alignment
+        shell: pwsh
+        run: ./scripts/check-version.ps1
+
+      - name: Check tag matches VERSION
+        run: |
+          tag="${RELEASE_TAG#v}"
+          ver="$(tr -d '[:space:]' < VERSION)"
+          if [ "$tag" != "$ver" ]; then
+            echo "Tag $RELEASE_TAG does not match VERSION $ver" >&2
+            exit 1
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run core tests
+        run: cargo test
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists, reusing it."
+          else
+            gh release create "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --draft \
+              --title "Cryptera $RELEASE_TAG" \
+              --notes "See CHANGELOG.md for details. Verify downloads against SHA256SUMS.txt."
+          fi
+
+  build:
+    name: Build bundles (${{ matrix.platform }})
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            args: ""
+            rust-targets: ""
+          - platform: windows-latest
+            args: ""
+            rust-targets: ""
+          - platform: macos-latest
+            args: "--target universal-apple-darwin"
+            rust-targets: "aarch64-apple-darwin,x86_64-apple-darwin"
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            src-tauri
+
+      - name: Install Linux dependencies
+        if: startsWith(matrix.platform, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev \
+            libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version '^2' --locked
+
+      - name: Build bundles
+        run: cargo tauri build ${{ matrix.args }}
+
+      - name: Collect artifacts
+        shell: bash
+        run: |
+          mkdir -p dist
+          find src-tauri/target -type f \
+            \( -name '*.msi' -o -name '*-setup.exe' -o -name '*.deb' \
+               -o -name '*.rpm' -o -name '*.AppImage' -o -name '*.dmg' \) \
+            -path '*/release/bundle/*' -exec cp -v {} dist/ \;
+          ls -la dist/
+
+      - name: Upload artifacts to draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          gh release upload "$RELEASE_TAG" dist/* \
+            --repo "$GITHUB_REPOSITORY" --clobber
+
+  checksums:
+    name: Attach SHA256SUMS
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compute and upload checksums
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir assets
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir assets
+          (cd assets && sha256sum -- * > ../SHA256SUMS.txt)
+          cat SHA256SUMS.txt
+          gh release upload "$RELEASE_TAG" SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" --clobber

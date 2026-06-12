@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Cryptera",
   "version": "2.0.0",
-  "identifier": "com.crypto.v2",
+  "identifier": "com.cryptera.app",
   "build": {
     "beforeDevCommand": "",
     "beforeBuildCommand": "",
@@ -10,6 +10,11 @@
   },
   "bundle": {
     "active": true,
+    "category": "Utility",
+    "publisher": "Cryptera Project",
+    "copyright": "© 2026 Cryptera contributors — MIT OR Apache-2.0",
+    "shortDescription": "Local file and folder encryption",
+    "longDescription": "Cryptera encrypts files and folders locally with AES-256-GCM, Argon2id and Reed-Solomon forward error correction. No cloud, no telemetry: data never leaves the device.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -17,9 +22,15 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "targets": [
-      "msi",
-      "nsis"
+    "targets": "all",
+    "fileAssociations": [
+      {
+        "ext": ["ecf"],
+        "name": "Cryptera Encrypted File",
+        "description": "Cryptera encrypted container",
+        "mimeType": "application/x-cryptera-ecf",
+        "role": "Editor"
+      }
     ]
   },
   "app": {
