@@ -22,11 +22,25 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Release pipeline** — pushing a `v*` tag builds installers for Windows
+  (`.msi`/NSIS), macOS (universal `.dmg`) and Linux (`.deb`/`.rpm`/AppImage) and
+  attaches them with `SHA256SUMS.txt` to a draft GitHub release. Binaries are not
+  yet code-signed.
+- **`.ecf` file association** — double-clicking an encrypted file opens the app on
+  the Decrypt panel with the file preloaded (argv on Windows/Linux,
+  `RunEvent::Opened` on macOS). Bundle identifier renamed to `com.cryptera.app`.
+- **Irreversibility warning** — a one-time confirmation before the first encryption
+  makes explicit that no password recovery exists.
+- **About panel** — shows the running version and a "Check for updates" button that
+  opens GitHub Releases in the browser; the app itself performs no network calls.
+- **Memory guard** — selecting the Strong/Paranoid Argon2 profile warns when
+  available RAM is insufficient instead of failing mid-encryption.
 - Structured `{code, message}` errors across the Tauri IPC boundary; the frontend
   maps stable codes to localized messages (EN/IT).
 - v4 format fixtures and backward-compatibility tests; FEC recovery-budget tests;
   pause/cancel regression tests.
 - Custom selects: full keyboard support and ARIA state sync; status live region.
+- Per-block shard encryption/decryption parallelized with rayon.
 
 ### Changed
 

@@ -40,6 +40,9 @@ costruita su un core crittografico in Rust e un'interfaccia grafica Tauri + Web.
 | **System Tray** | Chiusura → hide to tray; ripristino con doppio click o menu |
 | **Internazionalizzazione** | Italiano e Inglese, selezionabili a runtime |
 | **Drag & Drop** | File e cartelle trascinabili direttamente nei pannelli |
+| **Associazione file** | I file `.ecf` si aprono con doppio click sul pannello Decrypt |
+| **Telemetria** | **Nessuna** — l'app non effettua alcuna connessione di rete |
+| **Aggiornamenti** | Manuali — il pulsante in *About* apre GitHub Releases nel browser |
 
 ---
 
@@ -76,6 +79,26 @@ costruita su un core crittografico in Rust e un'interfaccia grafica Tauri + Web.
 
 > Su Linux, assicurarsi di avere installato i pacchetti di sistema per Tauri/WebKit:
 > `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `libayatana-appindicator3-dev`
+
+---
+
+## Installazione (utenti)
+
+Gli installer per Windows (`.msi` / NSIS), macOS (`.dmg` universale) e Linux
+(`.deb` / `.rpm` / AppImage) sono pubblicati nelle
+[GitHub Releases](https://github.com/gh0st032395/Cryptera/releases).
+Verificare l'integrità dei download con il file `SHA256SUMS.txt` allegato a
+ogni release:
+
+```bash
+sha256sum -c SHA256SUMS.txt --ignore-missing
+```
+
+> Nota: i binari non sono ancora firmati (Authenticode / notarizzazione Apple):
+> Windows SmartScreen e macOS Gatekeeper mostreranno un avviso al primo avvio.
+
+> ⚠️ **Non esiste recupero password**: senza password (e keyfile, se usato)
+> i dati cifrati sono irrecuperabili. Conservala in un password manager.
 
 ---
 
@@ -286,8 +309,9 @@ Per rilasciare una nuova versione, seguire la procedura in [`RELEASE.md`](RELEAS
 Per il dettaglio delle primitive crittografiche, garanzie di sicurezza, threat
 model e vulnerabilità note, consultare [`SECURITY.md`](SECURITY.md).
 
-**Segnalazione vulnerabilità**: aprire una issue privata o contattare il
-maintainer direttamente. Non pubblicare vulnerabilità come issue pubbliche.
+**Segnalazione vulnerabilità**: usare *GitHub → Security → "Report a
+vulnerability"* (segnalazione privata) o contattare il maintainer
+direttamente. Non pubblicare vulnerabilità come issue pubbliche.
 
 ---
 

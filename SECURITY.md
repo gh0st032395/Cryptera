@@ -316,8 +316,8 @@ still allows storing no name at all.
 1. **No Perfect Forward Secrecy**: Password compromise → all past files compromised
 2. **Metadata Leakage**: File size, encryption params visible
 3. **Memory Requirements**: High integrity settings can use significant RAM
+   (the UI warns when the selected Argon2 profile exceeds available memory)
 4. **No Built-in Key Management**: Users responsible for password/keyfile security
-5. **Single-threaded Decryption**: No parallel shard decryption (future enhancement)
 
 ---
 
@@ -326,7 +326,9 @@ still allows storing no name at all.
 If you suspect a security vulnerability:
 
 1. **Do not** publicly disclose before coordinated disclosure
-2. Contact maintainers privately
+2. Report privately via **GitHub → Security → "Report a vulnerability"**
+   (private vulnerability reporting on this repository), or contact the
+   maintainer directly
 3. Provide: Description, reproduction steps, impact assessment
 4. Expected response time: 48-72 hours for acknowledgment
 
