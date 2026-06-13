@@ -9,16 +9,6 @@ import { $, escapeHtml } from "./dom.js";
 import { setStatus } from "./ui-state.js";
 import { errorToText } from "./errors.js";
 
-const STARTUP_KEY = "cryptera_update_on_startup";
-
-export function updateOnStartupEnabled() {
-  try { return localStorage.getItem(STARTUP_KEY) === "1"; } catch (_) { return false; }
-}
-
-function setUpdateOnStartup(enabled) {
-  try { localStorage.setItem(STARTUP_KEY, enabled ? "1" : "0"); } catch (_) { /* ignore */ }
-}
-
 function showProgress(fraction) {
   const wrap = $("updateProgressWrap");
   const fill = $("updateProgressFill");
@@ -114,20 +104,13 @@ export function bindUpdater() {
   const btn = $("checkUpdatesBtn");
   if (btn) btn.addEventListener("click", () => checkForUpdates(true));
 
-  const toggle = $("updateOnStartup");
-  if (toggle) {
-    toggle.checked = updateOnStartupEnabled();
-    toggle.addEventListener("change", () => setUpdateOnStartup(toggle.checked));
-  }
-
   if (eventApi && eventApi.listen) {
     eventApi.listen("update-progress", (e) => {
       if (typeof e?.payload === "number") showProgress(e.payload);
     });
   }
 
-  // Opt-in: only touches the network if the user enabled startup checks.
-  if (updateOnStartupEnabled()) {
-    checkForUpdates(false).catch((err) => console.error(err));
-  }
+  // No automatic update check at startup: the app makes zero network calls
+  // until the user explicitly presses "Check for updates" in About. This is
+  // intentional — an update box must never appear on its own at launch.
 }

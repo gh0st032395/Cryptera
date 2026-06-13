@@ -18,10 +18,10 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Update dialog could trap the user** — it now always closes with Escape or a
   click on the backdrop, in addition to the Later button, and can never cover the
   UI permanently.
-- **Startup update check no longer pops a blocking dialog** — when the opt-in
-  startup check finds a newer version it shows a dismissible status message
-  ("Update X available — open About to install"); the install dialog only opens
-  on the explicit "Check for updates" action.
+- **No update check at startup** — update checking is now manual only, via the
+  "Check for updates" button in About; the app makes zero network calls at
+  launch and an update box can never appear on its own. The dialog (only opened
+  by that button) is fully dismissible (Escape / backdrop / Later).
 
 ---
 
