@@ -23,6 +23,7 @@
       "icons/icon.ico"
     ],
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "fileAssociations": [
       {
         "ext": ["ecf"],
@@ -51,6 +52,15 @@
     ]
   },
   "plugins": {
-    "dialog": null
+    "dialog": null,
+    "updater": {
+      "endpoints": [
+        "https://github.com/gh0st032395/Cryptera/releases/latest/download/latest.json"
+      ],
+      "pubkey": "REPLACE_WITH_TAURI_UPDATER_PUBKEY",
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

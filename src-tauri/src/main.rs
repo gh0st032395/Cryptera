@@ -13,6 +13,7 @@ use crypto_core_rs::{
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
 use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_updater::UpdaterExt;
 use tempfile::NamedTempFile;
 
 #[derive(Default)]
@@ -60,6 +61,7 @@ const ERR_TAR: &str = "TAR_ERROR";
 const ERR_EXTRACT: &str = "EXTRACT_ERROR";
 const ERR_STATE_LOCK: &str = "STATE_LOCK";
 const ERR_NO_ACTIVE_JOB: &str = "NO_ACTIVE_JOB";
+const ERR_UPDATE: &str = "UPDATE_ERROR";
 const ERR_UNKNOWN: &str = "UNKNOWN_ERROR";
 
 fn set_active_control(
@@ -765,6 +767,76 @@ fn open_releases_page() -> Result<(), CmdError> {
         .map_err(|e| CmdError::new(ERR_IO, e.to_string()))
 }
 
+#[derive(Serialize, Clone)]
+struct UpdateInfo {
+    available: bool,
+    version: String,
+    current_version: String,
+    notes: String,
+    date: Option<String>,
+}
+
+/// Check the signed update manifest (GitHub Releases) for a newer version.
+/// All network access is on the Rust side; the webview keeps CSP
+/// connect-src 'none'. Updates are only installed after signature
+/// verification against the embedded public key.
+#[tauri::command]
+async fn check_update(app: tauri::AppHandle) -> Result<UpdateInfo, CmdError> {
+    let updater = app
+        .updater()
+        .map_err(|e| CmdError::new(ERR_UPDATE, e.to_string()))?;
+    match updater.check().await {
+        Ok(Some(update)) => Ok(UpdateInfo {
+            available: true,
+            version: update.version.clone(),
+            current_version: update.current_version.clone(),
+            notes: update.body.clone().unwrap_or_default(),
+            date: update.date.map(|d| d.to_string()),
+        }),
+        Ok(None) => Ok(UpdateInfo {
+            available: false,
+            version: String::new(),
+            current_version: env!("CARGO_PKG_VERSION").to_string(),
+            notes: String::new(),
+            date: None,
+        }),
+        Err(e) => Err(CmdError::new(ERR_UPDATE, e.to_string())),
+    }
+}
+
+/// Download the pending update (emitting "update-progress" as a 0..1
+/// fraction), verify its signature, install it and relaunch the app.
+#[tauri::command]
+async fn install_update(app: tauri::AppHandle, window: tauri::Window) -> Result<(), CmdError> {
+    let updater = app
+        .updater()
+        .map_err(|e| CmdError::new(ERR_UPDATE, e.to_string()))?;
+    let update = updater
+        .check()
+        .await
+        .map_err(|e| CmdError::new(ERR_UPDATE, e.to_string()))?
+        .ok_or_else(|| CmdError::new(ERR_UPDATE, "No update available"))?;
+
+    let mut downloaded: u64 = 0;
+    update
+        .download_and_install(
+            move |chunk, total| {
+                downloaded += chunk as u64;
+                let percent = match total {
+                    Some(t) if t > 0 => downloaded as f64 / t as f64,
+                    _ => 0.0,
+                };
+                let _ = window.emit("update-progress", percent);
+            },
+            || {},
+        )
+        .await
+        .map_err(|e| CmdError::new(ERR_UPDATE, e.to_string()))?;
+
+    // Never returns: the app is relaunched into the new version.
+    app.restart()
+}
+
 /// Total and available system memory in MiB, used by the UI to warn when
 /// a high-memory Argon2 profile may not fit.
 #[tauri::command]
@@ -945,6 +1017,7 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(AppState::default())
         .manage(AuditState {
             logger: Mutex::new(audit_logger),
@@ -1008,6 +1081,8 @@ fn main() {
             get_launch_file,
             get_app_version,
             open_releases_page,
+            check_update,
+            install_update,
             get_memory_info,
             set_pause,
             cancel_job,
