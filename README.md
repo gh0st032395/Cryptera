@@ -257,31 +257,35 @@ autenticazione".
 ## Struttura del progetto
 
 ```
-cryptov2/
+Cryptera/
 ├── src/                    # Crypto core (lib crate: crypto_core_rs)
-│   └── lib.rs              # AES-GCM, Argon2id, Reed-Solomon, header v4
+│   └── lib.rs              # AES-GCM, Argon2id, Reed-Solomon, header v5
 ├── src-tauri/              # Tauri backend (bin crate: crypto_tauri)
 │   ├── src/
-│   │   ├── main.rs         # Tauri commands, AppState, AuditState, system tray
+│   │   ├── main.rs         # Tauri commands, AppState, AuditState, tray, updater
 │   │   └── audit.rs        # JSONL audit logger
 │   ├── capabilities/
 │   │   └── default.json    # Tauri permission capabilities
-│   └── tauri.conf.json     # App config (nome, finestra, bundle)
+│   └── tauri.conf.json     # App config (finestra, bundle, file assoc., updater)
 ├── ui/                     # Frontend (HTML + CSS + ES Modules, nessun build step)
 │   ├── index.html          # Layout principale, tutti i pannelli
 │   ├── styles.css          # Design system con CSS variables dark/light
-│   ├── app.js              # Logica UI, handlers, theme, history, batch, audit
+│   ├── app.js              # Bootstrap: wiring di elementi e moduli
 │   ├── loader.js           # Entry point (import dinamico di app.js)
-│   └── modules/
-│       ├── i18n.js         # Traduzioni EN / IT
-│       ├── tauri-bridge.js # Wrapper invoke/event/dialog/window
-│       └── ui-state.js     # Stato condiviso (busy, progress, meta render)
+│   └── modules/            # Moduli feature: operations, batch, metadata,
+│                           #   history, audit-view, password, dnd, events,
+│                           #   theme, tooltip, select, updater, warning,
+│                           #   errors, dom, i18n, tauri-bridge, ui-state
 ├── fuzz/                   # Fuzzing harness (cargo-fuzz)
-├── tests/                  # Test di regressione crittografica
+├── tests/                  # Regressione crittografica, FEC, pause/cancel,
+│                           #   compatibilità formato v4 (+ fixtures)
 ├── scripts/
 │   └── check-version.ps1   # Verifica allineamento versioni
+├── .github/workflows/      # CI: test/lint/CodeQL + release.yml (build firmate)
 ├── VERSION                 # Fonte ufficiale della versione
 ├── CHANGELOG.md
+├── IMPLEMENTATION_PLAN.md  # Piano di hardening/refactoring (storico)
+├── FORMAT_SPEC.md          # Specifica normativa del formato .ecf (v5)
 ├── SECURITY.md             # Threat model, primitive crittografiche
 └── RELEASE.md              # Procedura di rilascio
 ```
