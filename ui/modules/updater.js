@@ -47,12 +47,18 @@ function openUpdateDialog(info) {
   if (installBtn) installBtn.disabled = false;
   if (laterBtn) laterBtn.disabled = false;
 
+  // The dialog must never trap the user: Escape and a click on the
+  // backdrop dismiss it, in addition to the Later button.
   const close = () => {
     overlay.style.display = "none";
     installBtn?.removeEventListener("click", onInstall);
     laterBtn?.removeEventListener("click", onLater);
+    document.removeEventListener("keydown", onKey);
+    overlay.removeEventListener("mousedown", onBackdrop);
   };
   const onLater = () => close();
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  const onBackdrop = (e) => { if (e.target === overlay) close(); };
   const onInstall = async () => {
     if (installBtn) installBtn.disabled = true;
     if (laterBtn) laterBtn.disabled = true;
@@ -68,6 +74,8 @@ function openUpdateDialog(info) {
   };
   installBtn?.addEventListener("click", onInstall);
   laterBtn?.addEventListener("click", onLater);
+  document.addEventListener("keydown", onKey);
+  overlay.addEventListener("mousedown", onBackdrop);
   overlay.style.display = "flex";
   installBtn?.focus();
 }
@@ -83,7 +91,16 @@ export async function checkForUpdates(manual) {
   try {
     const info = await invoke("check_update");
     if (info && info.available) {
-      openUpdateDialog(info);
+      if (manual) {
+        openUpdateDialog(info);
+      } else {
+        // Startup check must never pop a blocking dialog: just notify, the
+        // user opens the dialog from About when they want to.
+        setStatus(
+          t("update_available_banner").replace("{version}", info.version || ""),
+          "info",
+        );
+      }
     } else if (manual) {
       setStatus(t("update_none"), "success");
     }

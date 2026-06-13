@@ -6,6 +6,25 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.0.1] — 2026-06-13
+
+### Fixed
+
+- **macOS launch freeze** — the window was configured `transparent: true` without
+  `macOSPrivateApi`, which on macOS produced a window that rendered but did not
+  receive mouse/keyboard input (the app appeared frozen, often behind the update
+  dialog). Transparency is now disabled; the frameless custom titlebar is
+  unchanged and the app is interactive on Windows and macOS.
+- **Update dialog could trap the user** — it now always closes with Escape or a
+  click on the backdrop, in addition to the Later button, and can never cover the
+  UI permanently.
+- **Startup update check no longer pops a blocking dialog** — when the opt-in
+  startup check finds a newer version it shows a dismissible status message
+  ("Update X available — open About to install"); the install dialog only opens
+  on the explicit "Check for updates" action.
+
+---
+
 ## [2.0.0] — 2026-06-12
 
 ### Changed — **BREAKING: file format header v5**
