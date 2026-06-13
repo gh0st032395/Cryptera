@@ -1,11 +1,17 @@
 name: Release
 
-# Builds installers for Windows, macOS and Linux when a version tag is
-# pushed, attaches them to a DRAFT GitHub release together with a
-# SHA256SUMS.txt file. The release must be reviewed and published by hand.
+# Builds signed installers for Windows, macOS and Linux when a version tag
+# is pushed, generates the updater manifest (latest.json) and attaches
+# everything to a DRAFT GitHub release plus a SHA256SUMS.txt file. The
+# release must be reviewed and published by hand.
 #
-# Code signing is intentionally not configured yet; when certificates are
-# available, add the platform signing env vars to the build job.
+# Required secrets for the auto-updater (generate once with
+# `cargo tauri signer generate`, see RELEASE.md):
+#   TAURI_SIGNING_PRIVATE_KEY           — the updater private key
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD  — its password (may be empty)
+# The matching PUBLIC key must be set as plugins.updater.pubkey in
+# src-tauri/tauri.conf.json. OS code signing (Authenticode / Apple) is a
+# separate, still-unconfigured step.
 
 on:
   push:
@@ -20,7 +26,7 @@ env:
 
 jobs:
   verify:
-    name: Verify versions and create draft release
+    name: Verify versions and configuration
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,25 +44,17 @@ jobs:
             exit 1
           fi
 
+      - name: Reject placeholder updater public key
+        run: |
+          if grep -q "REPLACE_WITH_TAURI_UPDATER_PUBKEY" src-tauri/tauri.conf.json; then
+            echo "::error::The updater public key is still the placeholder. Generate a key with 'cargo tauri signer generate', set plugins.updater.pubkey and the TAURI_SIGNING_PRIVATE_KEY secret before releasing (see RELEASE.md)." >&2
+            exit 1
+          fi
+
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-
       - name: Run core tests
         run: cargo test
-
-      - name: Create draft release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            echo "Release $RELEASE_TAG already exists, reusing it."
-          else
-            gh release create "$RELEASE_TAG" \
-              --repo "$GITHUB_REPOSITORY" \
-              --draft \
-              --title "Cryptera $RELEASE_TAG" \
-              --notes "See CHANGELOG.md for details. Verify downloads against SHA256SUMS.txt."
-          fi
 
   build:
     name: Build bundles (${{ matrix.platform }})
@@ -96,29 +94,19 @@ jobs:
             libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev \
             libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
 
-      - name: Install Tauri CLI
-        run: cargo install tauri-cli --version '^2' --locked
-
-      - name: Build bundles
-        run: cargo tauri build ${{ matrix.args }}
-
-      - name: Collect artifacts
-        shell: bash
-        run: |
-          mkdir -p dist
-          find src-tauri/target -type f \
-            \( -name '*.msi' -o -name '*-setup.exe' -o -name '*.deb' \
-               -o -name '*.rpm' -o -name '*.AppImage' -o -name '*.dmg' \) \
-            -path '*/release/bundle/*' -exec cp -v {} dist/ \;
-          ls -la dist/
-
-      - name: Upload artifacts to draft release
+      - name: Build, sign and publish to draft release
+        uses: tauri-apps/tauri-action@v0
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          gh release upload "$RELEASE_TAG" dist/* \
-            --repo "$GITHUB_REPOSITORY" --clobber
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Cryptera ${{ github.ref_name }}"
+          releaseBody: "See CHANGELOG.md for details. Verify downloads against SHA256SUMS.txt."
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
 
   checksums:
     name: Attach SHA256SUMS

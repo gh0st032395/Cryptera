@@ -31,8 +31,13 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `RunEvent::Opened` on macOS). Bundle identifier renamed to `com.cryptera.app`.
 - **Irreversibility warning** — a one-time confirmation before the first encryption
   makes explicit that no password recovery exists.
-- **About panel** — shows the running version and a "Check for updates" button that
-  opens GitHub Releases in the browser; the app itself performs no network calls.
+- **Signed in-app auto-updater** (`tauri-plugin-updater`) — the About panel checks
+  GitHub for a newer release; on confirmation the app downloads it, verifies its
+  signature against an embedded public key, installs it and relaunches. A
+  download progress bar is shown. Startup checks are **opt-in** (off by default);
+  the updater is the only component that touches the network (Rust side), while
+  the webview keeps `connect-src 'none'` and encryption stays fully offline.
+- **About panel** — shows the running app version.
 - **Memory guard** — selecting the Strong/Paranoid Argon2 profile warns when
   available RAM is insufficient instead of failing mid-encryption.
 - Structured `{code, message}` errors across the Tauri IPC boundary; the frontend

@@ -346,6 +346,14 @@ If you suspect a security vulnerability:
 - Structured `{code, message}` errors across the IPC boundary; audit log stores
   stable error codes only (no raw messages/paths).
 - Event-driven pause/cancel (Condvar) in the crypto core.
+- **Signed auto-updater**: updates are downloaded and installed only after their
+  signature verifies against a public key embedded in the app (minisign /
+  `tauri-plugin-updater`). This authenticates the update channel even though the
+  installers are not yet OS-code-signed: a compromise of the GitHub release
+  assets or a network MITM cannot push a malicious update without the private
+  signing key. The updater is the only network-facing component (Rust side); the
+  webview keeps `connect-src 'none'` and encryption never touches the network.
+  Startup update checks are opt-in.
 
 ### App v1.1.0 / Header v4
 - Header Authentication Tag: HMAC binding between key and header (anti-tampering).

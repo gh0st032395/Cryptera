@@ -33,22 +33,52 @@ Pushing a `v*` tag triggers `.github/workflows/release.yml`, which:
 
 1. **verify** — checks version alignment, checks the tag matches `VERSION`,
    runs the core test suite, then creates a **draft** GitHub release.
-2. **build** — builds installers on Windows (`.msi`, NSIS `-setup.exe`),
-   macOS (universal `.dmg`) and Linux (`.deb`, `.rpm`, `.AppImage`) and
-   uploads them to the draft release.
+2. **build** (`tauri-apps/tauri-action`) — builds installers on Windows
+   (`.msi`, NSIS `-setup.exe`), macOS (universal `.dmg`) and Linux
+   (`.deb`, `.rpm`, `.AppImage`), **signs them with the updater key**,
+   generates the updater manifest `latest.json` and uploads everything to
+   the draft release.
 3. **checksums** — downloads every asset, generates `SHA256SUMS.txt` and
    attaches it to the release.
 
 The release stays in **draft**: review the assets, paste the relevant
 `CHANGELOG.md` section into the release notes, then publish manually.
+The in-app updater only sees **published, non-prerelease** releases (it
+reads `releases/latest/download/latest.json`), so a draft never triggers
+an update prematurely.
 
-### Not yet automated (requires credentials)
+## Auto-updater signing key (one-time setup — REQUIRED before first release)
 
-- **Code signing / notarization** — Windows Authenticode and Apple
-  Developer ID certificates are not configured. Until they are, users
-  will see SmartScreen/Gatekeeper warnings. When available, wire the
-  signing env vars into the `build` job.
-- **Auto-updater** — `tauri-plugin-updater` requires a signing keypair
-  for update manifests. The in-app "Check for updates" button only opens
-  the GitHub Releases page in the browser; the app itself performs no
-  network calls.
+The auto-updater installs an update only if its signature verifies against
+the public key embedded in the app. This key is **free and self-generated**
+(it is *not* the paid OS code-signing certificate). Until it is configured,
+the `verify` job fails on purpose (placeholder-pubkey guard).
+
+On a trusted machine (never in CI):
+
+```bash
+cargo install tauri-cli --version '^2' --locked   # if not already installed
+cargo tauri signer generate -w ~/.cryptera-updater.key
+```
+
+This prints a **public key** and writes the **private key** to the file.
+Then:
+
+1. Put the public key in `src-tauri/tauri.conf.json` →
+   `plugins.updater.pubkey` (replacing `REPLACE_WITH_TAURI_UPDATER_PUBKEY`).
+   Commit this — the public key is meant to be embedded.
+2. In the GitHub repo, add **Settings → Secrets and variables → Actions**:
+   - `TAURI_SIGNING_PRIVATE_KEY` — the contents of `~/.cryptera-updater.key`
+   - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — the password you chose (may be empty)
+3. **Guard the private key like the crown jewel**: whoever holds it can push
+   a malicious auto-update to every install. If it leaks, rotate it
+   (generate a new pair, ship an app update with the new pubkey).
+
+### Still not automated (requires paid credentials)
+
+- **OS code signing / notarization** — Windows Authenticode and Apple
+  Developer ID certificates are not configured, so SmartScreen/Gatekeeper
+  will warn on first launch. The updater signature is independent of this
+  and already protects the update channel; OS signing additionally removes
+  the install-time warnings. When certificates are available, add their
+  env vars to the `build` job.
