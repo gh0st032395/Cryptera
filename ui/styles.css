@@ -1132,3 +1132,19 @@ button {
   gap: 10px;
   justify-content: flex-end;
 }
+
+.modal-notes {
+  max-height: 160px;
+  overflow-y: auto;
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin: 0 0 16px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: inherit;
+}

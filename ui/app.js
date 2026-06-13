@@ -30,6 +30,7 @@ import { bindBackendEvents } from "./modules/events.js";
 import { initTheme } from "./modules/theme.js";
 import { setupTooltips } from "./modules/tooltip.js";
 import { setupCustomSelects } from "./modules/select.js";
+import { bindUpdater } from "./modules/updater.js";
 
 // ── Global error handlers ─────────────────────────────────────────────────────
 window.addEventListener("error", (e) => {
@@ -179,8 +180,8 @@ function bindEvents() {
   onClick("refreshAuditBtn", loadAuditLog);
   onClick("clearAuditBtn", clearAuditLog);
 
-  // About panel
-  onClick("checkUpdatesBtn", () => invoke("open_releases_page"));
+  // About panel: the update flow (button + startup check) is wired by
+  // bindUpdater() in bootInit.
 
   // Warn when the selected Argon2 profile may not fit in available RAM
   const encSecProfileEl = $("encSecProfile");
@@ -295,6 +296,7 @@ function bootInit() {
     bindBackendEvents();
     setupTooltips();
     setupCustomSelects();
+    bindUpdater();
 
     if (!assertBackendApi()) return;
 

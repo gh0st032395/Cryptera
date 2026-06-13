@@ -497,8 +497,12 @@
             <span class="pill">v<span id="appVersion">—</span></span>
           </div>
           <div class="mt-24">
-            <button id="checkUpdatesBtn" class="secondary" data-i18n="btn_check_updates">Check for updates (opens
-              GitHub)</button>
+            <button id="checkUpdatesBtn" class="secondary" data-i18n="btn_check_updates">Check for updates</button>
+            <div class="checkbox" style="margin-top:12px" data-i18n-tooltip="tooltip_update_startup"
+              data-tooltip="When enabled, Cryptera checks GitHub for a signed update at startup. This is the only time the app accesses the network; encryption stays fully offline.">
+              <input id="updateOnStartup" type="checkbox" />
+              <label for="updateOnStartup" data-i18n="update_check_startup">Check for updates at startup</label>
+            </div>
           </div>
           <div class="mt-24">
             <div class="field w-200">
@@ -531,6 +535,29 @@
       <div class="modal-actions">
         <button id="pwdWarningCancel" class="ghost" data-i18n="pwd_warning_cancel">Cancel</button>
         <button id="pwdWarningConfirm" class="cta" data-i18n="pwd_warning_confirm">I understand — encrypt</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Update available dialog -->
+  <div id="updateOverlay" class="modal-overlay" style="display:none" role="dialog" aria-modal="true"
+    aria-labelledby="updateTitle">
+    <div class="modal-box">
+      <div class="modal-title" id="updateTitle" data-i18n="update_available_title">An update is available</div>
+      <p class="modal-text">
+        <span data-i18n="update_current">Current version</span>: <strong id="updateCurrent">—</strong><br />
+        <span data-i18n="update_new">New version</span>: <strong id="updateNew">—</strong>
+      </p>
+      <pre id="updateNotes" class="modal-notes"></pre>
+      <div class="progress" id="updateProgressWrap" style="display:none;margin-bottom:14px">
+        <div class="progress-track">
+          <div id="updateProgressFill" class="progress-fill"></div>
+        </div>
+        <div id="updateProgressValue" class="progress-value">0%</div>
+      </div>
+      <div class="modal-actions">
+        <button id="updateLater" class="ghost" data-i18n="update_later">Later</button>
+        <button id="updateInstall" class="cta" data-i18n="update_install">Download &amp; install</button>
       </div>
     </div>
   </div>
