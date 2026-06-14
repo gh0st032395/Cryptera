@@ -6,6 +6,24 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.0.3] — 2026-06-14
+
+### Fixed
+
+- **Update dialog appeared at launch in installed builds (real root cause).**
+  The frontend is embedded into the binary at compile time by
+  `generate_context!`, but Tauri did not track the `ui/` files as build inputs.
+  Editing only frontend files therefore did not trigger a recompile, so release
+  bundles (local **and** CI) kept shipping the *old* embedded HTML/JS — the
+  pre-fix updater that auto-opened the update dialog on launch — even though the
+  source was already corrected. Debug (`tauri dev`) reads `ui/` from disk and
+  was never affected, which is why the bug showed up only in installed builds.
+  `build.rs` now fingerprints the whole `ui/` tree and exposes it as a rustc
+  env referenced by `main.rs`, forcing the asset-embedding crate to recompile
+  whenever any frontend file changes. Bundles can no longer ship stale UI.
+
+---
+
 ## [2.0.2] — 2026-06-14
 
 ### Fixed

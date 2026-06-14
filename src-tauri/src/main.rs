@@ -64,6 +64,12 @@ const ERR_NO_ACTIVE_JOB: &str = "NO_ACTIVE_JOB";
 const ERR_UPDATE: &str = "UPDATE_ERROR";
 const ERR_UNKNOWN: &str = "UNKNOWN_ERROR";
 
+// Ties this crate's recompilation to the frontend contents. `build.rs` sets
+// CRYPTERA_FRONTEND_HASH from a hash of every file under ../ui; referencing it
+// here forces `generate_context!` (which embeds the frontend) to re-run on any
+// UI change, so a release bundle can never ship stale embedded HTML/JS.
+const _: &str = env!("CRYPTERA_FRONTEND_HASH");
+
 fn set_active_control(
     state: &tauri::State<'_, AppState>,
     ctrl: ControlFlags,
