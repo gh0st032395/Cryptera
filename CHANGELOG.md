@@ -6,6 +6,21 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.0.2] — 2026-06-14
+
+### Fixed
+
+- **Update dialog opening on launch in installed builds** — the startup
+  auto-update check (removed in the source for 2.0.1) had never actually been
+  shipped: the published v2.0.0 / v2.0.1 installers were built from earlier
+  sources and still opened the update dialog on launch — and on v2.0.0 it could
+  not be dismissed, locking the app. 2.0.2 is the first release built from the
+  corrected sources: the app makes no network calls at launch and the update box
+  only ever appears from About → "Check for updates" (always dismissible via
+  Escape / backdrop / Later).
+
+---
+
 ## [2.0.1] — 2026-06-13
 
 ### Fixed
