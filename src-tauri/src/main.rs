@@ -64,6 +64,12 @@ const ERR_NO_ACTIVE_JOB: &str = "NO_ACTIVE_JOB";
 const ERR_UPDATE: &str = "UPDATE_ERROR";
 const ERR_UNKNOWN: &str = "UNKNOWN_ERROR";
 
+// Tray identity + tooltips. The tooltip doubles as feedback that closing the
+// window only hid it to the tray (the app keeps running).
+const TRAY_ID: &str = "main-tray";
+const TRAY_TOOLTIP_DEFAULT: &str = "Cryptera — right-click for options";
+const TRAY_TOOLTIP_HIDDEN: &str = "Cryptera is running — double-click the tray icon to reopen";
+
 // Ties this crate's recompilation to the frontend contents. `build.rs` sets
 // CRYPTERA_FRONTEND_HASH from a hash of every file under ../ui; referencing it
 // here forces `generate_context!` (which embeds the frontend) to re-run on any
@@ -542,8 +548,14 @@ async fn encrypt(
                 "backend_enc_archiving",
                 "Creating archive...",
             );
+            // Pre-count entries so the archiving phase reports real progress
+            // instead of sitting at 0% (total was previously emitted as 0).
+            let total_entries = walkdir::WalkDir::new(&req.input_folder)
+                .follow_links(false)
+                .into_iter()
+                .count() as u64;
             let mut archive_progress = |done: u64| {
-                emit_progress(&window_clone, "archiving", done, 0);
+                emit_progress(&window_clone, "archiving", done, total_entries);
             };
             let (tmp_tar, base_name) = create_tar(
                 Path::new(&req.input_folder),
@@ -1041,15 +1053,18 @@ fn main() {
             let (rgba, w, h) = build_tray_icon_rgba();
             let icon = tauri::image::Image::new_owned(rgba, w, h);
 
-            TrayIconBuilder::new()
+            TrayIconBuilder::with_id(TRAY_ID)
                 .menu(&menu)
-                .tooltip("Cryptera — right-click for options")
+                .tooltip(TRAY_TOOLTIP_DEFAULT)
                 .icon(icon)
                 .on_menu_event(|app, event| match event.id().as_ref() {
                     "show" => {
                         if let Some(win) = app.get_webview_window("main") {
                             let _ = win.show();
                             let _ = win.set_focus();
+                        }
+                        if let Some(tray) = app.tray_by_id(TRAY_ID) {
+                            let _ = tray.set_tooltip(Some(TRAY_TOOLTIP_DEFAULT));
                         }
                     }
                     "quit" => app.exit(0),
@@ -1062,6 +1077,7 @@ fn main() {
                             let _ = win.show();
                             let _ = win.set_focus();
                         }
+                        let _ = tray.set_tooltip(Some(TRAY_TOOLTIP_DEFAULT));
                     }
                 })
                 .build(app)?;
@@ -1073,6 +1089,11 @@ fn main() {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                         api.prevent_close();
                         let _ = win_hide.hide();
+                        // The window vanishing silently looks like a full quit;
+                        // signal via the tray tooltip that the app is still alive.
+                        if let Some(tray) = win_hide.app_handle().tray_by_id(TRAY_ID) {
+                            let _ = tray.set_tooltip(Some(TRAY_TOOLTIP_HIDDEN));
+                        }
                     }
                 });
             }

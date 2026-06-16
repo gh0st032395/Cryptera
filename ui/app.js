@@ -8,7 +8,7 @@ import {
   pickSave,
   bindWindowControls,
 } from "./modules/tauri-bridge.js";
-import { t, updateLanguage } from "./modules/i18n.js";
+import { t, updateLanguage, getSavedLanguage } from "./modules/i18n.js";
 import { state, setStatus, setProgress, setBusy, updateMode } from "./modules/ui-state.js";
 import { $ } from "./modules/dom.js";
 import { errorToText } from "./modules/errors.js";
@@ -300,7 +300,12 @@ function bootInit() {
 
     if (!assertBackendApi()) return;
 
-    updateLanguage("en");
+    // Restore the previously selected language (theme is already persisted);
+    // seed the hidden select value first so the dropdown reflects it too.
+    const savedLang = getSavedLanguage();
+    const langInput = $("languageSelect");
+    if (langInput) langInput.value = savedLang;
+    updateLanguage(savedLang);
     updateMode("file");
     refreshPasswordStrengthMeters();
     setProgress(0);

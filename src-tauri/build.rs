@@ -46,6 +46,18 @@ fn main() {
     // `main.rs` references it, so the crate — and therefore the asset-embedding
     // macro — is recompiled whenever any frontend file changes, guaranteeing
     // the bundle always embeds the current UI.
+    //
+    // IMPORTANT: Cargo's normal `rerun-if-changed` is mtime-based. Cloud-sync
+    // tools (notably OneDrive, where this repo may live) rewrite file
+    // timestamps, which defeats that detection: build.rs would NOT re-run, the
+    // hash stayed stale, `main.rs` was not recompiled, and the release embedded
+    // an OLD frontend (e.g. a startup "update available" popup that the current
+    // code no longer triggers). To be immune to that, we point a
+    // `rerun-if-changed` at a path that does not exist, which forces Cargo to
+    // run this script on EVERY build. The hash is then always recomputed from
+    // the actual bytes on disk, so `main.rs` recompiles (and re-embeds) exactly
+    // when the frontend content really changes — and never reuses a stale embed.
+    println!("cargo:rerun-if-changed=__cryptera_force_frontend_rehash__");
     println!("cargo:rerun-if-changed=../ui");
     let mut files = BTreeMap::new();
     collect(Path::new("../ui"), &mut files);

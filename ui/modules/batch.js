@@ -2,7 +2,7 @@
 import { invoke } from "./tauri-bridge.js";
 import { t } from "./i18n.js";
 import { setStatus, setProgress, setBusy } from "./ui-state.js";
-import { $, escapeHtml, basename, formatDuration } from "./dom.js";
+import { $, escapeHtml, basename, formatDuration, META_FLAG_TAR_CONTAINER } from "./dom.js";
 import { mapErrorToUserFeedback, isCancelledError } from "./errors.js";
 import { logOperation } from "./history.js";
 import { clearPasswordFields } from "./password.js";
@@ -129,15 +129,42 @@ export async function handleBatchDecrypt() {
 
     const sep = item.path.includes("\\") ? "\\" : "/";
     const lastSep = item.path.lastIndexOf(sep);
-    const dir = (batchOutputFolder && batchOutputFolder.value.trim())
+    const baseDir = (batchOutputFolder && batchOutputFolder.value.trim())
       || (lastSep > 0 ? item.path.substring(0, lastSep) : ".");
+    const baseName = basename(item.path).replace(/\.ecf$/i, "");
+    const join = (name) => `${baseDir}${baseDir.endsWith(sep) ? "" : sep}${name}`;
+
+    // Per-file routing: the single global "auto-extract" toggle only makes
+    // sense for folder archives. Inspect each file's header so single-file
+    // .ecf entries decrypt to a real output file path instead of being treated
+    // as a TAR container — which previously failed with EXTRACT_ERROR (extract
+    // on) or OUTPUT_EXISTS (extract off, output_path was the folder).
+    let extract;
+    let outputPath;
+    try {
+      const meta = await invoke("read_metadata", { req: { input_file: item.path } });
+      const isContainer = !!meta && (meta.flags & META_FLAG_TAR_CONTAINER) !== 0;
+      if (isContainer) {
+        extract = batchExtract ? batchExtract.checked : true;
+        outputPath = extract ? baseDir : join(`${baseName}.tar`);
+      } else {
+        extract = false;
+        const rawName = meta && meta.filename ? String(meta.filename).trim() : "";
+        // basename() strips any path separators to avoid writing outside baseDir.
+        outputPath = join(rawName ? basename(rawName) : baseName);
+      }
+    } catch (_) {
+      // Metadata unreadable: fall back to the previous folder-extract behavior.
+      extract = batchExtract ? batchExtract.checked : true;
+      outputPath = baseDir;
+    }
 
     const payload = {
       input_file: item.path,
-      output_path: dir,
+      output_path: outputPath,
       password: batchPassword.value,
       keyfile_path: batchKeyfile && batchKeyfile.value.trim() ? batchKeyfile.value.trim() : null,
-      extract: batchExtract ? batchExtract.checked : true,
+      extract,
       keep_tar: false,
     };
 

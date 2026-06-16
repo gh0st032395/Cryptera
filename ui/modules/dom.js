@@ -48,6 +48,10 @@ export function syncSelectTriggers() {
         if (input && trigger) {
             const matchingOpt = Array.from(options).find(o => o.dataset.value === input.value);
             if (matchingOpt) trigger.textContent = matchingOpt.textContent;
+            // Keep the highlighted option in sync with the hidden value too,
+            // so programmatic changes (boot, reset, language restore) are
+            // reflected in the dropdown, not just the trigger label.
+            options.forEach(o => o.classList.toggle("selected", o.dataset.value === input.value));
         }
     });
 }

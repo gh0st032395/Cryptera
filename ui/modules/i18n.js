@@ -69,11 +69,9 @@ export const translations = {
         btn_run_ver: "Run Integrity Check",
         panel_about_title: "System Info",
         panel_about_desc: "Architecture and version details.",
-        about_text: "CryptoV2 is a high-performance local encryption utility powered by Rust. It leverages AES-GCM-256 and Argon2id relative to erasure coding for maximum resilience. Zero cloud dependencies, absolute privacy.",
+        about_text: "Cryptera is a high-performance local encryption utility powered by Rust. It leverages AES-GCM-256 and Argon2id alongside Reed-Solomon erasure coding for maximum resilience. Zero cloud dependencies, absolute privacy.",
         label_language: "Interface Language",
         btn_check_updates: "Check for updates",
-        update_check_startup: "Check for updates at startup",
-        tooltip_update_startup: "When enabled, Cryptera checks GitHub for a signed update at startup. This is the only time the app accesses the network; encryption stays fully offline.",
         update_checking: "Checking for updates…",
         update_available_banner: "Update {version} is available — open About to install.",
         update_none: "You are running the latest version.",
@@ -290,11 +288,9 @@ export const translations = {
         btn_run_ver: "Avvia Verifica",
         panel_about_title: "Informazioni",
         panel_about_desc: "Dettagli versione e architettura.",
-        about_text: "CryptoV2 è un'utility di cifratura ad alte prestazioni. Utilizza AES-GCM-256 e Argon2id con codifica di cancellazione (Reed-Solomon) per garantire la massima resilienza dei dati. Zero dipendenze cloud, privacy locale assoluta.",
+        about_text: "Cryptera è un'utility di cifratura ad alte prestazioni basata su Rust. Utilizza AES-GCM-256 e Argon2id con codifica di cancellazione (Reed-Solomon) per garantire la massima resilienza dei dati. Zero dipendenze cloud, privacy locale assoluta.",
         label_language: "Lingua Interfaccia",
         btn_check_updates: "Controlla aggiornamenti",
-        update_check_startup: "Controlla aggiornamenti all'avvio",
-        tooltip_update_startup: "Se attivo, all'avvio Cryptera verifica su GitHub la presenza di un aggiornamento firmato. È l'unico momento in cui l'app accede alla rete; la cifratura resta completamente offline.",
         update_checking: "Controllo aggiornamenti…",
         update_available_banner: "Aggiornamento {version} disponibile — apri About per installarlo.",
         update_none: "Stai usando l'ultima versione.",
@@ -477,9 +473,22 @@ export function applyTranslations(lang) {
     });
 }
 
+const LANG_KEY = "cryptera_lang";
+
+/** Saved UI language, or "en" when none was stored / storage is unavailable. */
+export function getSavedLanguage() {
+    try {
+        const saved = localStorage.getItem(LANG_KEY);
+        if (saved && translations[saved]) return saved;
+    } catch (_) { /* ignore */ }
+    return "en";
+}
+
 export function updateLanguage(lang) {
-    state.language = lang;
-    applyTranslations(lang);
+    const next = translations[lang] ? lang : "en";
+    state.language = next;
+    try { localStorage.setItem(LANG_KEY, next); } catch (_) { /* ignore */ }
+    applyTranslations(next);
     syncSelectTriggers();
-    _languageListeners.forEach((cb) => cb(lang));
+    _languageListeners.forEach((cb) => cb(next));
 }

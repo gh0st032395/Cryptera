@@ -49,6 +49,10 @@ export function setBusy(value) {
     }
     if (pauseBtn) pauseBtn.disabled = !value;
     if (cancelBtn) cancelBtn.disabled = !value;
+    // Re-enabling every button above also re-enables the Choose button of the
+    // inactive source mode; re-apply the File/Folder gating so it stays
+    // consistent with the selected mode once the operation finishes.
+    if (!value) updateMode(state.mode);
 }
 
 export function updateMode(mode) {

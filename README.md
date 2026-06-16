@@ -42,7 +42,7 @@ costruita su un core crittografico in Rust e un'interfaccia grafica Tauri + Web.
 | **Drag & Drop** | File e cartelle trascinabili direttamente nei pannelli |
 | **Associazione file** | I file `.ecf` si aprono con doppio click sul pannello Decrypt |
 | **Telemetria** | **Nessuna** — nessun tracciamento, nessuna analitica |
-| **Aggiornamenti** | In-app, firmati e verificati; controllo all'avvio **opt-in** |
+| **Aggiornamenti** | In-app, firmati e verificati; controllo **manuale** dal pannello About |
 
 ---
 
@@ -99,13 +99,14 @@ sha256sum -c SHA256SUMS.txt --ignore-missing
 
 ### Aggiornamenti
 
-Cryptera include un updater integrato: dal pannello *About* (o, se abilitato,
-all'avvio) controlla la presenza di una nuova versione, e su conferma la
-scarica, **ne verifica la firma crittografica** e la installa. L'updater è
-**l'unico** componente che accede alla rete (lato Rust, verso GitHub
-Releases); le operazioni di cifratura restano completamente offline e la
-webview mantiene `connect-src 'none'`. Il controllo all'avvio è disattivato
-per default e va abilitato esplicitamente.
+Cryptera include un updater integrato: dal pannello *About*, premendo
+**"Controlla aggiornamenti"**, verifica la presenza di una nuova versione e,
+su conferma, la scarica, **ne verifica la firma crittografica** e la installa.
+L'updater è **l'unico** componente che accede alla rete (lato Rust, verso
+GitHub Releases); le operazioni di cifratura restano completamente offline e la
+webview mantiene `connect-src 'none'`. Non viene effettuato alcun controllo
+automatico all'avvio: l'app non esegue alcuna chiamata di rete finché non è
+l'utente a richiederlo esplicitamente.
 
 > ⚠️ **Non esiste recupero password**: senza password (e keyfile, se usato)
 > i dati cifrati sono irrecuperabili. Conservala in un password manager.
