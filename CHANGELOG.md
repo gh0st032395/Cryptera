@@ -6,6 +6,38 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.0.4] — 2026-06-16
+
+### Fixed
+
+- **Startup modals ("An update is available" + "There is no password recovery")
+  appeared on launch in RELEASE builds — the actual root cause.** The CSP
+  `style-src 'self'` blocks inline `style=` attributes. The modal overlays are
+  hidden with inline `style="display:none"` while `.modal-overlay` is
+  `display:flex` in the stylesheet, so under the strict release CSP they became
+  visible at startup. `tauri dev` relaxes the CSP, which is why the bug only
+  reproduced in release — including clean CI bundles built from the 2.0.3 tag
+  (the 2.0.3 "embed staleness" change did not address this). Fixed by allowing
+  `'unsafe-inline'` in `style-src`; `script-src` stays `'self'` and all dynamic
+  content is still escaped, so script injection is not enabled.
+- **Batch decrypt** now inspects each file's header and routes single-file
+  `.ecf` vs TAR archives correctly, instead of assuming a container (which
+  failed with `EXTRACT_ERROR` / `OUTPUT_EXISTS` on single files).
+- File/Folder source gating is re-applied after an operation completes.
+- The selected UI language is now persisted across restarts.
+- About text corrected: "CryptoV2" → "Cryptera"; removed dead startup-update
+  i18n keys.
+
+### Changed
+
+- The system-tray tooltip now signals that the app keeps running when the
+  window is closed to the tray.
+- Folder archiving reports real progress instead of staying at 0%.
+- `build.rs` forces the frontend content re-hash on every build so incremental
+  and cloud-synced (e.g. OneDrive) builds always re-embed the current UI.
+
+---
+
 ## [2.0.3] — 2026-06-14
 
 ### Fixed
