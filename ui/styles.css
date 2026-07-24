@@ -156,6 +156,12 @@
   box-sizing: border-box;
 }
 
+/* Layout rules (.field, .input-row, ...) set display, so the plain [hidden]
+   attribute would be ignored without this. */
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   font-family: "Segoe UI", "Helvetica Neue", sans-serif;

@@ -58,18 +58,28 @@ export function setBusy(value) {
 export function updateMode(mode) {
     state.mode = mode;
     document.querySelectorAll(".seg").forEach((btn) => {
-        btn.classList.toggle("active", btn.dataset.mode === mode);
+        const active = btn.dataset.mode === mode;
+        btn.classList.toggle("active", active);
+        btn.setAttribute("aria-pressed", active ? "true" : "false");
     });
 
-    const encFile = document.getElementById("encFile");
-    const encFolder = document.getElementById("encFolder");
-    if (encFile) encFile.disabled = mode !== "file";
-    if (encFolder) encFolder.disabled = mode !== "folder";
+    // Show only the controls the backend actually reads in this mode (source
+    // picker, compression, skip_special). Hiding instead of disabling keeps the
+    // panel from looking redundant, and it survives setBusy(), which re-enables
+    // every button indiscriminately.
+    document.querySelectorAll("[data-mode-only]").forEach((el) => {
+        el.hidden = el.dataset.modeOnly !== mode;
+    });
 
-    const encFileBtn = document.getElementById("encFileBtn");
-    const encFolderBtn = document.getElementById("encFolderBtn");
-    if (encFileBtn) encFileBtn.disabled = mode !== "file";
-    if (encFolderBtn) encFolderBtn.disabled = mode !== "folder";
+    // Drop the path of the mode we just left, plus the output derived from it:
+    // switching mode means picking a different source, and a leftover
+    // "mydoc.ecf" next to an empty folder path only confuses.
+    const stale = document.getElementById(mode === "file" ? "encFolder" : "encFile");
+    const encOutput = document.getElementById("encOutput");
+    if (stale && stale.value) {
+        stale.value = "";
+        if (encOutput) encOutput.value = "";
+    }
 }
 
 export function renderMetaTo(target, meta, labels = {}) {

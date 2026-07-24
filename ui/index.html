@@ -108,19 +108,19 @@
         <div class="panel-grid">
           <div class="card">
             <div class="card-title" data-i18n="card_source">Source</div>
-            <div class="segmented">
-              <button class="seg active" data-mode="file" data-i18n="seg_file">File</button>
-              <button class="seg" data-mode="folder" data-i18n="seg_folder">Folder</button>
+            <div class="segmented" role="group">
+              <button class="seg active" data-mode="file" data-i18n="seg_file" aria-pressed="true">File</button>
+              <button class="seg" data-mode="folder" data-i18n="seg_folder" aria-pressed="false">Folder</button>
             </div>
-            <div class="field">
-              <label data-i18n="label_file_path">File path</label>
+            <div class="field" data-mode-only="file">
+              <label for="encFile" data-i18n="label_file_path">File path</label>
               <div class="input-row">
                 <input id="encFile" type="text" placeholder="Select a file" />
                 <button id="encFileBtn" class="primary" data-i18n="btn_choose">Choose</button>
               </div>
             </div>
-            <div class="field">
-              <label data-i18n="label_folder_path">Folder path</label>
+            <div class="field" data-mode-only="folder" hidden>
+              <label for="encFolder" data-i18n="label_folder_path">Folder path</label>
               <div class="input-row">
                 <input id="encFolder" type="text" placeholder="Select a folder" />
                 <button id="encFolderBtn" class="primary" data-i18n="btn_choose">Choose</button>
@@ -200,7 +200,7 @@
 
           <div class="card">
             <div class="card-title" data-i18n="card_options">Options</div>
-            <div class="field">
+            <div class="field" data-mode-only="file">
               <label data-i18n="label_file_comp" data-i18n-tooltip="tooltip_file_comp"
                 data-tooltip="Compresses the file before encryption to save space.">File compression</label>
               <div class="custom-select" id="encFileComp-wrapper">
@@ -217,7 +217,7 @@
                 </div>
               </div>
             </div>
-            <div class="field">
+            <div class="field" data-mode-only="folder" hidden>
               <label data-i18n="label_folder_comp" data-i18n-tooltip="tooltip_folder_comp"
                 data-tooltip="Compresses the TAR archive when encrypting a folder.">Folder archive
                 compression</label>
@@ -236,7 +236,7 @@
                 </div>
               </div>
             </div>
-            <div class="checkbox" data-i18n-tooltip="tooltip_skip_special"
+            <div class="checkbox" data-mode-only="folder" hidden data-i18n-tooltip="tooltip_skip_special"
               data-tooltip="If checked, symbolic links and special device files will be detected and skipped to prevent errors.">
               <input id="encSkipSpecial" type="checkbox" checked />
               <label for="encSkipSpecial" data-i18n="check_skip_special">Skip symlinks and special entries</label>
