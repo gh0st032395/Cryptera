@@ -1,0 +1,19 @@
+[package]
+name = "cryptera_ops"
+version = "2.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Archive and profile helpers shared by the Cryptera GUI and CLI"
+
+[lib]
+name = "cryptera_ops"
+crate-type = ["rlib"]
+
+[dependencies]
+crypto_core_rs = { path = "..", version = "=2.1.0" }
+flate2 = "1.0"
+bzip2 = "0.4"
+xz2 = "0.1"
+tar = "0.4.45"
+tempfile = "3.10"
+walkdir = "2.5"

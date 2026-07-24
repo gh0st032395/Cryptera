@@ -108,9 +108,94 @@ jobs:
           prerelease: false
           args: ${{ matrix.args }}
 
+  # ── Scriptable CLI ────────────────────────────────────────────────────────
+  # Standalone `cryptera` binary, no GUI and no webview: this is what CI jobs
+  # and shell/PowerShell scripts drive. macOS gets a universal binary built
+  # from both arches with lipo.
+  cli:
+    name: Build CLI (${{ matrix.platform }})
+    # After `build`, not in parallel with it: tauri-action is what creates the
+    # draft release these assets are uploaded to.
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            asset: cryptera-cli-linux-x86_64.tar.gz
+          - platform: windows-latest
+            asset: cryptera-cli-windows-x86_64.zip
+          - platform: macos-latest
+            asset: cryptera-cli-macos-universal.tar.gz
+            rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: cli
+
+      - name: Build (Linux)
+        if: startsWith(matrix.platform, 'ubuntu')
+        run: |
+          cargo build --release --manifest-path cli/Cargo.toml
+          tar -czf "${{ matrix.asset }}" -C cli/target/release cryptera
+
+      - name: Build (Windows)
+        if: startsWith(matrix.platform, 'windows')
+        shell: pwsh
+        run: |
+          cargo build --release --manifest-path cli/Cargo.toml
+          Compress-Archive -Path cli/target/release/cryptera.exe -DestinationPath "${{ matrix.asset }}"
+
+      - name: Build (macOS universal)
+        if: startsWith(matrix.platform, 'macos')
+        run: |
+          cargo build --release --manifest-path cli/Cargo.toml --target aarch64-apple-darwin
+          cargo build --release --manifest-path cli/Cargo.toml --target x86_64-apple-darwin
+          mkdir -p dist
+          lipo -create -output dist/cryptera \
+            cli/target/aarch64-apple-darwin/release/cryptera \
+            cli/target/x86_64-apple-darwin/release/cryptera
+          lipo -info dist/cryptera
+          tar -czf "${{ matrix.asset }}" -C dist cryptera
+
+      - name: Smoke test the built binary
+        shell: bash
+        env:
+          CRYPTERA_PASSWORD: ci-smoke-test-password
+        run: |
+          set -eu
+          case "${{ matrix.platform }}" in
+            windows*) BIN=cli/target/release/cryptera.exe ;;
+            macos*)   BIN=dist/cryptera ;;
+            *)        BIN=cli/target/release/cryptera ;;
+          esac
+          echo "payload" > smoke.txt
+          "$BIN" encrypt smoke.txt --quiet
+          "$BIN" verify smoke.ecf --json --quiet
+          rm smoke.txt
+          "$BIN" decrypt smoke.ecf --quiet
+          grep -q payload smoke.txt
+          # A wrong password must exit 3, the contract scripts branch on.
+          set +e
+          CRYPTERA_PASSWORD=wrong "$BIN" verify smoke.ecf --quiet 2>/dev/null
+          [ $? -eq 3 ] || { echo "expected exit 3 for a wrong password" >&2; exit 1; }
+
+      - name: Upload to draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: gh release upload "$RELEASE_TAG" "${{ matrix.asset }}" --repo "$GITHUB_REPOSITORY" --clobber
+
   checksums:
     name: Attach SHA256SUMS
-    needs: build
+    needs: [build, cli]
     runs-on: ubuntu-latest
     steps:
       - name: Compute and upload checksums

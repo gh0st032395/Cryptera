@@ -514,6 +514,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
 
 [[package]]
+name = "cryptera_ops"
+version = "2.1.0"
+dependencies = [
+ "bzip2",
+ "crypto_core_rs",
+ "flate2",
+ "tar",
+ "tempfile",
+ "walkdir",
+ "xz2",
+]
+
+[[package]]
 name = "crypto-common"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -526,7 +539,7 @@ dependencies = [
 
 [[package]]
 name = "crypto_core_rs"
-version = "2.0.4"
+version = "2.1.0"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -544,24 +557,20 @@ dependencies = [
 
 [[package]]
 name = "crypto_tauri"
-version = "2.0.4"
+version = "2.1.0"
 dependencies = [
- "bzip2",
+ "cryptera_ops",
  "crypto_core_rs",
- "flate2",
  "open",
  "secrecy",
  "serde",
  "serde_json",
  "sysinfo",
- "tar",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-updater",
  "tempfile",
- "walkdir",
- "xz2",
 ]
 
 [[package]]

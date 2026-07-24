@@ -34,6 +34,34 @@ jobs:
       - name: cargo test (crypto_core_rs)
         run: cargo test --all-features
 
+  # ── Shared ops + CLI tests ────────────────────────────────────────────────
+  # macOS is in this matrix (and not in the others) because the CLI is the
+  # supported way to script Cryptera on both Windows and macOS.
+  test-cli:
+    name: Test (ops + cli — ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            ops
+            cli
+
+      - name: cargo test (cryptera_ops)
+        run: cargo test --manifest-path ops/Cargo.toml
+
+      - name: cargo test (cryptera_cli)
+        run: cargo test --manifest-path cli/Cargo.toml
+
   # ── Tauri backend tests ───────────────────────────────────────────────────
   test-tauri:
     name: Test (tauri backend — ${{ matrix.os }})
@@ -86,6 +114,12 @@ jobs:
       - name: clippy (core)
         run: cargo clippy --all-features -- -D warnings
 
+      - name: clippy (ops)
+        run: cargo clippy --manifest-path ops/Cargo.toml --all-targets -- -D warnings
+
+      - name: clippy (cli)
+        run: cargo clippy --manifest-path cli/Cargo.toml --all-targets -- -D warnings
+
       - name: Install Linux GUI dependencies
         run: |
           sudo apt-get update
@@ -113,6 +147,12 @@ jobs:
 
       - name: fmt check (core)
         run: cargo fmt -- --check
+
+      - name: fmt check (ops)
+        run: cargo fmt --manifest-path ops/Cargo.toml -- --check
+
+      - name: fmt check (cli)
+        run: cargo fmt --manifest-path cli/Cargo.toml -- --check
 
       - name: fmt check (tauri backend)
         working-directory: src-tauri

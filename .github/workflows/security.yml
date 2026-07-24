@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        crate_path: [".", "src-tauri"]
+        crate_path: [".", "ops", "cli", "src-tauri"]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -32,6 +32,12 @@ jobs:
         run: cargo install cargo-deny --locked
       - name: Run cargo-deny
         run: cargo deny check advisories bans licenses sources
+
+      - name: Run cargo-deny (ops)
+        run: cargo deny --manifest-path ops/Cargo.toml check advisories bans licenses sources --config deny.toml
+
+      - name: Run cargo-deny (cli)
+        run: cargo deny --manifest-path cli/Cargo.toml check advisories bans licenses sources --config deny.toml
 
   version-check:
     runs-on: windows-latest

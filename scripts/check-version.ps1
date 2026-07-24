@@ -6,6 +6,8 @@ if (-not $version) {
 }
 
 $rootCargo = Get-Content Cargo.toml -Raw
+$opsCargo = Get-Content ops/Cargo.toml -Raw
+$cliCargo = Get-Content cli/Cargo.toml -Raw
 $tauriCargo = Get-Content src-tauri/Cargo.toml -Raw
 $tauriConfig = Get-Content src-tauri/tauri.conf.json -Raw
 
@@ -20,7 +22,23 @@ function Assert-Version([string]$content, [string]$name) {
 }
 
 Assert-Version $rootCargo "Cargo.toml"
+Assert-Version $opsCargo "ops/Cargo.toml"
+Assert-Version $cliCargo "cli/Cargo.toml"
 Assert-Version $tauriCargo "src-tauri/Cargo.toml"
+
+# The path dependencies pin the exact core/ops version; a bump has to reach
+# them too or the workspace silently builds against a stale copy.
+foreach ($pair in @(
+    @{ name = "ops/Cargo.toml"; content = $opsCargo },
+    @{ name = "cli/Cargo.toml"; content = $cliCargo },
+    @{ name = "src-tauri/Cargo.toml"; content = $tauriCargo }
+  )) {
+  foreach ($m in [regex]::Matches($pair.content, 'version\s*=\s*"=([^"]+)"')) {
+    if ($m.Groups[1].Value -ne $version) {
+      throw "$($pair.name) pins a path dependency to $($m.Groups[1].Value), expected $version"
+    }
+  }
+}
 
 $cfg = $tauriConfig | ConvertFrom-Json
 if ($cfg.version -ne $version) {

@@ -5,9 +5,14 @@
 
 ## Files that must match `VERSION`
 - `Cargo.toml`
+- `ops/Cargo.toml`
+- `cli/Cargo.toml`
 - `src-tauri/Cargo.toml`
 - `src-tauri/tauri.conf.json`
 - `package.json`
+
+The `ops`, `cli` and `src-tauri` manifests also pin their path dependencies
+with `=<version>`; `check-version.ps1` verifies those pins too.
 
 ## Pre-release checklist
 1. Update `VERSION`
@@ -16,6 +21,8 @@
    - `./scripts/check-version.ps1`
    - `cargo check`
    - `cargo test`
+   - `cargo test --manifest-path ops/Cargo.toml`
+   - `cargo test --manifest-path cli/Cargo.toml`
    - `cargo test --manifest-path src-tauri/Cargo.toml`
    - `cargo check --manifest-path fuzz/Cargo.toml`
    - `cargo audit`
@@ -38,7 +45,11 @@ Pushing a `v*` tag triggers `.github/workflows/release.yml`, which:
    (`.deb`, `.rpm`, `.AppImage`), **signs them with the updater key**,
    generates the updater manifest `latest.json` and uploads everything to
    the draft release.
-3. **checksums** — downloads every asset, generates `SHA256SUMS.txt` and
+3. **cli** — builds the standalone `cryptera` binary for Windows, macOS
+   (universal, via `lipo`) and Linux, smoke-tests each one (encrypt → verify →
+   decrypt, plus the exit-code-3 contract for a wrong password) and uploads the
+   archives to the draft release.
+4. **checksums** — downloads every asset, generates `SHA256SUMS.txt` and
    attaches it to the release.
 
 The release stays in **draft**: review the assets, paste the relevant

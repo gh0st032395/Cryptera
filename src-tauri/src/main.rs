@@ -3,12 +3,17 @@
 mod audit;
 
 use secrecy::{ExposeSecret, Secret};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Mutex;
 
 use crypto_core_rs::{
     decrypt_file_ex_rs_controlled, encrypt_file_rs_controlled, get_keyfile_hash_rs,
     read_metadata_rs, verify_file_integrity_rs_controlled, ControlFlags, MetaInfo,
+};
+// Archiving, extraction and the named profiles are shared with the CLI so both
+// front-ends behave identically; see the `cryptera_ops` crate.
+use cryptera_ops::{
+    count_entries, create_tar, int_profile_params, safe_extract_tar, sec_profile_params, OpError,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
@@ -52,13 +57,20 @@ impl From<crypto_core_rs::CoreError> for CmdError {
     }
 }
 
+impl From<OpError> for CmdError {
+    fn from(e: OpError) -> Self {
+        Self {
+            code: e.code,
+            message: e.message,
+        }
+    }
+}
+
 const ERR_PASSWORD_REQUIRED: &str = "PASSWORD_REQUIRED";
 const ERR_INPUT_REQUIRED: &str = "INPUT_REQUIRED";
 const ERR_OUTPUT_REQUIRED: &str = "OUTPUT_REQUIRED";
 const ERR_OUTPUT_EXISTS: &str = "OUTPUT_EXISTS";
 const ERR_IO: &str = "IO_ERROR";
-const ERR_TAR: &str = "TAR_ERROR";
-const ERR_EXTRACT: &str = "EXTRACT_ERROR";
 const ERR_STATE_LOCK: &str = "STATE_LOCK";
 const ERR_NO_ACTIVE_JOB: &str = "NO_ACTIVE_JOB";
 const ERR_UPDATE: &str = "UPDATE_ERROR";
@@ -204,23 +216,6 @@ struct VerifyResult {
     meta: MetaInfoDto,
 }
 
-fn sec_profile_params(profile: &str) -> (u32, u32, u16) {
-    match profile {
-        "Strong" => (6, 256 * 1024, 4),
-        "Paranoid" => (10, 512 * 1024, 8),
-        _ => (3, 64 * 1024, 2),
-    }
-}
-
-fn int_profile_params(profile: &str) -> (u16, u16) {
-    match profile {
-        "Low" => (28, 4),
-        "High" => (12, 12),
-        "Max" => (8, 24),
-        _ => (24, 8),
-    }
-}
-
 fn emit_status(window: &tauri::Window, code: &str, message: &str) {
     let payload = StatusPayload {
         code: code.to_string(),
@@ -257,171 +252,6 @@ fn ensure_parent_dir(path: &str) -> Result<(), CmdError> {
 fn ensure_dir(path: &str) -> Result<(), CmdError> {
     if !path.is_empty() {
         std::fs::create_dir_all(path).map_err(|e| CmdError::new(ERR_IO, e.to_string()))?;
-    }
-    Ok(())
-}
-
-fn tar_suffix(comp: &str) -> &'static str {
-    match comp {
-        "gz" => ".tar.gz",
-        "bz2" => ".tar.bz2",
-        "xz" => ".tar.xz",
-        _ => ".tar",
-    }
-}
-
-/// Archive base name derived from the folder name, with a sensible
-/// fallback for paths without a final component (e.g. filesystem root).
-fn tar_base_name(folder: &Path) -> String {
-    let name = folder
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
-    if name.is_empty() {
-        "archive".to_string()
-    } else {
-        name
-    }
-}
-
-fn create_tar(
-    folder: &Path,
-    comp: &str,
-    skip_special: bool,
-    ctrl: &ControlFlags,
-    mut progress: Option<&mut dyn FnMut(u64)>,
-) -> Result<(NamedTempFile, String), CmdError> {
-    let base_name = tar_base_name(folder);
-    let tmp = NamedTempFile::new().map_err(|e| CmdError::new(ERR_IO, e.to_string()))?;
-
-    let file = tmp
-        .reopen()
-        .map_err(|e| CmdError::new(ERR_IO, e.to_string()))?;
-    let writer: Box<dyn std::io::Write> = match comp {
-        "gz" => Box::new(flate2::write::GzEncoder::new(
-            file,
-            flate2::Compression::default(),
-        )),
-        "bz2" => Box::new(bzip2::write::BzEncoder::new(
-            file,
-            bzip2::Compression::default(),
-        )),
-        "xz" => Box::new(xz2::write::XzEncoder::new(file, 6)),
-        _ => Box::new(file),
-    };
-
-    let mut builder = tar::Builder::new(writer);
-    let base_prefix = PathBuf::from(&base_name);
-
-    let mut count = 0;
-    for entry in walkdir::WalkDir::new(folder).follow_links(false) {
-        ctrl.wait_if_paused().map_err(CmdError::from)?;
-
-        count += 1;
-        if count % 10 == 0 {
-            if let Some(cb) = progress.as_deref_mut() {
-                cb(count);
-            }
-        }
-
-        let entry = match entry {
-            Ok(e) => e,
-            Err(_) => {
-                if skip_special {
-                    continue;
-                } else {
-                    return Err(CmdError::new(ERR_TAR, "Failed to read directory entry"));
-                }
-            }
-        };
-
-        if skip_special && entry.file_type().is_symlink() {
-            continue;
-        }
-
-        let path = entry.path();
-        let rel = match path.strip_prefix(folder) {
-            Ok(r) => r,
-            Err(_) => continue,
-        };
-        let tar_path = if rel.as_os_str().is_empty() {
-            base_prefix.clone()
-        } else {
-            base_prefix.join(rel)
-        };
-
-        if entry.file_type().is_dir() {
-            builder
-                .append_dir(&tar_path, path)
-                .map_err(|e| CmdError::new(ERR_TAR, e.to_string()))?;
-        } else if entry.file_type().is_file() {
-            builder
-                .append_path_with_name(path, &tar_path)
-                .map_err(|e| CmdError::new(ERR_TAR, e.to_string()))?;
-        }
-    }
-
-    if let Some(cb) = progress.as_mut() {
-        cb(count);
-    }
-
-    builder
-        .finish()
-        .map_err(|e| CmdError::new(ERR_TAR, e.to_string()))?;
-    Ok((tmp, format!("{base_name}{}", tar_suffix(comp))))
-}
-
-fn safe_extract_tar(tar_path: &str, out_dir: &str) -> Result<(), std::io::Error> {
-    let out_dir = Path::new(out_dir).to_path_buf();
-    let file = std::fs::File::open(tar_path)?;
-
-    let path_str = tar_path.to_lowercase();
-    let decoder: Box<dyn std::io::Read> =
-        if path_str.ends_with(".tar.gz") || path_str.ends_with(".tgz") {
-            Box::new(flate2::read::GzDecoder::new(file))
-        } else if path_str.ends_with(".tar.bz2") || path_str.ends_with(".tbz2") {
-            Box::new(bzip2::read::BzDecoder::new(file))
-        } else if path_str.ends_with(".tar.xz") || path_str.ends_with(".txz") {
-            Box::new(xz2::read::XzDecoder::new(file))
-        } else {
-            Box::new(file)
-        };
-
-    let mut archive = tar::Archive::new(decoder);
-
-    for entry in archive.entries()? {
-        let mut entry = entry?;
-        let path = entry.path()?;
-
-        // Prevent Zip Slip
-        if path
-            .components()
-            .any(|c| matches!(c, std::path::Component::ParentDir))
-        {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "Zip Slip attempt detected",
-            ));
-        }
-
-        if path.is_absolute() {
-            continue;
-        }
-
-        // Prevent Windows UNC / Drive letters
-        let path_lossy = path.to_string_lossy();
-        if path_lossy.contains(':') || path_lossy.starts_with(r"\\") {
-            continue;
-        }
-
-        // Skip Symlinks/Hardlinks as per policy
-        if entry.header().entry_type().is_symlink() || entry.header().entry_type().is_hard_link() {
-            continue;
-        }
-
-        // Double check destination (validation done by unpack_in)
-        entry.unpack_in(&out_dir)?;
     }
     Ok(())
 }
@@ -550,10 +380,7 @@ async fn encrypt(
             );
             // Pre-count entries so the archiving phase reports real progress
             // instead of sitting at 0% (total was previously emitted as 0).
-            let total_entries = walkdir::WalkDir::new(&req.input_folder)
-                .follow_links(false)
-                .into_iter()
-                .count() as u64;
+            let total_entries = count_entries(Path::new(&req.input_folder));
             let mut archive_progress = |done: u64| {
                 emit_progress(&window_clone, "archiving", done, total_entries);
             };
@@ -713,8 +540,7 @@ async fn decrypt(
         .map_err(CmdError::from)?;
 
         emit_status(&window_clone, "backend_dec_extract", "Extracting files...");
-        safe_extract_tar(&tar_path, &req.output_path)
-            .map_err(|e| CmdError::new(ERR_EXTRACT, e.to_string()))?;
+        safe_extract_tar(&tar_path, &req.output_path)?;
 
         if req.keep_tar {
             let target = Path::new(&req.output_path).join("decrypted.tar");
@@ -1144,39 +970,6 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs::File;
-    use tempfile::tempdir;
-
-    #[test]
-    fn security_profile_mapping_is_stable() {
-        assert_eq!(sec_profile_params("Standard"), (3, 64 * 1024, 2));
-        assert_eq!(sec_profile_params("Strong"), (6, 256 * 1024, 4));
-        assert_eq!(sec_profile_params("Paranoid"), (10, 512 * 1024, 8));
-        assert_eq!(sec_profile_params("unknown"), (3, 64 * 1024, 2));
-    }
-
-    #[test]
-    fn integrity_profile_mapping_is_stable() {
-        assert_eq!(int_profile_params("Medium"), (24, 8));
-        assert_eq!(int_profile_params("Low"), (28, 4));
-        assert_eq!(int_profile_params("High"), (12, 12));
-        assert_eq!(int_profile_params("Max"), (8, 24));
-        assert_eq!(int_profile_params("unknown"), (24, 8));
-    }
-
-    #[test]
-    fn tar_suffix_mapping_is_stable() {
-        assert_eq!(tar_suffix("none"), ".tar");
-        assert_eq!(tar_suffix("gz"), ".tar.gz");
-        assert_eq!(tar_suffix("bz2"), ".tar.bz2");
-        assert_eq!(tar_suffix("xz"), ".tar.xz");
-    }
-
-    #[test]
-    fn tar_base_name_falls_back_for_root_paths() {
-        assert_eq!(tar_base_name(Path::new("/home/user/docs")), "docs");
-        assert_eq!(tar_base_name(Path::new("/")), "archive");
-    }
 
     #[test]
     fn cmd_error_preserves_core_error_code() {
@@ -1186,50 +979,12 @@ mod tests {
         assert_eq!(cmd_err.message, "details with /paths");
     }
 
+    // Profile mapping, TAR naming and the extraction hardening moved to the
+    // shared `cryptera_ops` crate and are covered by its own tests.
     #[test]
-    fn safe_extract_tar_rejects_zip_slip_entries() {
-        let dir = tempdir().expect("tempdir");
-        let tar_path = dir.path().join("malicious.tar");
-        let out_dir = dir.path().join("out");
-        std::fs::create_dir_all(&out_dir).expect("create out dir");
-
-        // Build a valid tar first.
-        {
-            let tar_file = File::create(&tar_path).expect("create tar");
-            let mut builder = tar::Builder::new(tar_file);
-            let payload = b"evil";
-            let mut header = tar::Header::new_gnu();
-            header.set_size(payload.len() as u64);
-            header.set_mode(0o644);
-            header.set_cksum();
-            builder
-                .append_data(&mut header, "safe.txt", &payload[..])
-                .expect("append safe entry");
-            builder.finish().expect("finish tar");
-        }
-
-        // Mutate first entry name to "../escape.txt" and fix checksum.
-        let mut raw = std::fs::read(&tar_path).expect("read tar");
-        let header = &mut raw[..512];
-        for b in &mut header[..100] {
-            *b = 0;
-        }
-        let evil_name = b"../escape.txt";
-        header[..evil_name.len()].copy_from_slice(evil_name);
-        for b in &mut header[148..156] {
-            *b = b' ';
-        }
-        let sum: u32 = header.iter().map(|b| *b as u32).sum();
-        let chk = format!("{:06o}\0 ", sum);
-        header[148..156].copy_from_slice(chk.as_bytes());
-        std::fs::write(&tar_path, &raw).expect("write mutated tar");
-
-        let err = safe_extract_tar(
-            tar_path.to_str().expect("utf8 path"),
-            out_dir.to_str().expect("utf8 path"),
-        )
-        .expect_err("zip slip path must be rejected");
-        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
-        assert!(!dir.path().join("escape.txt").exists());
+    fn cmd_error_preserves_op_error_code() {
+        let op_err = OpError::new(cryptera_ops::ERR_EXTRACT, "Zip Slip attempt detected");
+        let cmd_err = CmdError::from(op_err);
+        assert_eq!(cmd_err.code, "EXTRACT_ERROR");
     }
 }

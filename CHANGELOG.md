@@ -6,6 +6,48 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.1.0] — 2026-07-24
+
+### Added
+
+- **`cryptera` CLI — Cryptera is now scriptable on Windows, macOS and Linux.**
+  New `cli/` crate producing a standalone binary (no GUI, no webview) with
+  `encrypt`, `decrypt`, `verify` and `meta` over the same core and the same
+  `.ecf` format as the app. Built for automation: `--json` emits a single object
+  on stdout, progress goes to stderr only, and exit codes are stable (0 ok,
+  1 error, 2 usage, 3 wrong password, 4 corrupt, 5 output exists, 6 cancelled).
+  Passwords are deliberately not accepted as arguments — argv is world-readable
+  — and come from stdin, a file, an environment variable, or a no-echo prompt.
+  Folders are TAR-archived exactly as in the GUI, and containers are
+  auto-extracted on decrypt. Release builds for the three platforms (macOS
+  universal) are attached to every GitHub release and smoke-tested in CI.
+
+### Changed
+
+- **Shared `ops/` crate.** Folder archiving, the entry pre-count behind the
+  archiving progress bar, the hardened TAR extraction
+  (path-traversal, absolute paths and links) and the security/integrity profile
+  tables moved out of the Tauri backend into `cryptera_ops`, so the GUI and the
+  CLI cannot drift apart — in particular the extraction hardening now has one
+  implementation instead of two.
+- **Encrypt panel no longer shows controls the selected mode ignores.** The
+  File/Folder selector now drives which source picker exists at all; previously
+  both rows were shown and the inactive one was merely disabled, which read as
+  redundant (2.0.4 fixed that disabling being lost after each job; hiding makes
+  the state unrepresentable instead). The same applies to the compression
+  selects and "skip symlinks", which the backend only reads in one of the two
+  modes. Switching mode also clears the abandoned source path and the output
+  derived from it.
+
+### Security
+
+- **Container filenames are sanitized before use as paths.** When the CLI
+  derives an output name from the header, the stored name is accepted only if it
+  is a single ordinary path component: separators, `..`, drive letters and UNC
+  prefixes are rejected rather than repaired.
+
+---
+
 ## [2.0.4] — 2026-06-16
 
 ### Fixed

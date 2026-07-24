@@ -14,12 +14,13 @@ costruita su un core crittografico in Rust e un'interfaccia grafica Tauri + Web.
 3. [Requisiti](#requisiti)
 4. [Build e avvio](#build-e-avvio)
 5. [Utilizzo](#utilizzo)
-6. [Profili di sicurezza e integrità](#profili-di-sicurezza-e-integrità)
-7. [Formato dei file `.ecf`](#formato-dei-file-ecf)
-8. [Struttura del progetto](#struttura-del-progetto)
-9. [Versionamento](#versionamento)
-10. [Sicurezza](#sicurezza)
-11. [Licenza](#licenza)
+6. [CLI: uso da script](#cli-uso-da-script)
+7. [Profili di sicurezza e integrità](#profili-di-sicurezza-e-integrità)
+8. [Formato dei file `.ecf`](#formato-dei-file-ecf)
+9. [Struttura del progetto](#struttura-del-progetto)
+10. [Versionamento](#versionamento)
+11. [Sicurezza](#sicurezza)
+12. [Licenza](#licenza)
 
 ---
 
@@ -41,6 +42,7 @@ costruita su un core crittografico in Rust e un'interfaccia grafica Tauri + Web.
 | **Internazionalizzazione** | Italiano e Inglese, selezionabili a runtime |
 | **Drag & Drop** | File e cartelle trascinabili direttamente nei pannelli |
 | **Associazione file** | I file `.ecf` si aprono con doppio click sul pannello Decrypt |
+| **CLI** | Eseguibile `cryptera` per script su Windows/macOS/Linux, output JSON |
 | **Telemetria** | **Nessuna** — nessun tracciamento, nessuna analitica |
 | **Aggiornamenti** | In-app, firmati e verificati; controllo **manuale** dal pannello About |
 
@@ -60,7 +62,11 @@ costruita su un core crittografico in Rust e un'interfaccia grafica Tauri + Web.
 │   Backend  (src-tauri/)                                  │
 │   Rust 2021 · tauri v2.5 · secrecy · serde_json         │
 │   Tray icon · Audit JSONL · ControlFlags (cancel/pause)  │
-├──────────────────────────────────────────────────────────┤
+├────────────────────────────┬─────────────────────────────┤
+│   Shared ops (ops/)        │   CLI  (cli/ — `cryptera`)   │
+│   TAR · estrazione sicura  │   script-friendly · JSON     │
+│   profili sec/int          │   exit code stabili          │
+├────────────────────────────┴─────────────────────────────┤
 │   Crypto Core  (src/ — crypto_core_rs)                   │
 │   AES-256-GCM · Argon2id · Reed-Solomon · Header v5      │
 └──────────────────────────────────────────────────────────┘
@@ -132,14 +138,23 @@ cargo tauri build
 ### Solo il core crittografico (test)
 
 ```bash
-cargo test                        # test core
+cargo test                                       # test core
+cargo test --manifest-path ops/Cargo.toml        # test livello condiviso (TAR/estrazione)
+cargo test --manifest-path cli/Cargo.toml        # test CLI (unit + roundtrip end-to-end)
 cargo test --manifest-path src-tauri/Cargo.toml  # test Tauri backend
+```
+
+### CLI
+
+```bash
+cargo build --release --manifest-path cli/Cargo.toml
+# binario: cli/target/release/cryptera
 ```
 
 ### Verifica versioni
 
 ```bash
-# controlla che VERSION, Cargo.toml, src-tauri/Cargo.toml e tauri.conf.json siano allineate
+# controlla che VERSION, Cargo.toml, ops/, cli/, src-tauri/ e tauri.conf.json siano allineate
 pwsh ./scripts/check-version.ps1
 ```
 
@@ -198,6 +213,112 @@ Ogni voce contiene: timestamp UTC, operazione, file, dimensione, durata, stato.
 Cliccando **×** la finestra si nasconde nel system tray.
 Doppio click sull'icona tray (o menu contestuale → *Open Cryptera*) ripristina la
 finestra. Per chiudere definitivamente: menu tray → **Quit**.
+
+---
+
+## CLI: uso da script
+
+Oltre alla GUI, il repository produce un eseguibile autonomo **`cryptera`**
+(crate `cli/`) che usa lo stesso core e lo stesso formato `.ecf`. Non apre
+finestre e non richiede webview: è il modo supportato per automatizzare Cryptera
+su **Windows, macOS e Linux** (backup notturni, pipeline CI, hook di deploy).
+
+I binari sono allegati a ogni release GitHub:
+
+| Piattaforma | Asset |
+|---|---|
+| Windows x86_64 | `cryptera-cli-windows-x86_64.zip` |
+| macOS (universal, Intel + Apple Silicon) | `cryptera-cli-macos-universal.tar.gz` |
+| Linux x86_64 | `cryptera-cli-linux-x86_64.tar.gz` |
+
+Build locale:
+
+```bash
+cargo build --release --manifest-path cli/Cargo.toml
+# binario: cli/target/release/cryptera (cryptera.exe su Windows)
+```
+
+### Comandi
+
+| Comando | Cosa fa |
+|---|---|
+| `cryptera encrypt <file\|cartella>` | Cifra in un container `.ecf` (le cartelle passano da un TAR) |
+| `cryptera decrypt <file.ecf>` | Decifra; i container cartella vengono estratti automaticamente |
+| `cryptera verify <file.ecf>` | Verifica password e integrità senza scrivere nulla |
+| `cryptera meta <file.ecf>` | Stampa i metadati dell'header — **senza password** |
+
+`cryptera <comando> --help` elenca tutte le opzioni. Le principali di `encrypt`:
+`--sec-profile`, `--int-profile`, `--file-comp`, `--folder-comp`, `--keyfile`,
+`--hide-filename`, `--no-pwchk`, `--keep-symlinks`, `--force`.
+
+### Password: mai sulla riga di comando
+
+`--password` **non esiste**, di proposito: gli argomenti sono leggibili da
+qualsiasi utente della macchina (`ps`, `/proc`, WMI) e finiscono nella cronologia
+della shell. Le sorgenti accettate, in ordine di precedenza:
+
+| Sorgente | Uso |
+|---|---|
+| `--password-stdin` | prima riga di stdin (pipe da un secret manager) |
+| `--password-file <PATH>` | prima riga del file |
+| `--password-env <VAR>` | variabile d'ambiente indicata |
+| `$CRYPTERA_PASSWORD` | usata se non si passa nessun flag |
+| prompt interattivo | solo se stdin è un terminale (con conferma su `encrypt`) |
+
+Viene letta solo la prima riga e si rimuove il solo terminatore: spazi iniziali
+e finali fanno parte della password.
+
+### Output e codici di uscita
+
+Con `--json` viene stampato su **stdout** un singolo oggetto JSON; senza,
+stdout contiene solo il percorso prodotto. Avanzamento e messaggi vanno sempre su
+**stderr**, così `--json` resta parsabile anche durante un job lungo. `--quiet`
+azzera stderr.
+
+| Codice | Significato |
+|---|---|
+| 0 | ok |
+| 1 | errore generico (I/O, password mancante, …) |
+| 2 | uso errato degli argomenti |
+| 3 | password (o keyfile) sbagliata |
+| 4 | file corrotto, troncato o non `.ecf` |
+| 5 | l'output esiste già (serve `--force`) |
+| 6 | operazione annullata |
+
+### Esempi
+
+```bash
+# backup di una cartella, password da un file di secret
+cryptera encrypt ~/Documenti --folder-comp gz -o /backup/docs.ecf \
+  --password-file /run/secrets/cryptera --sec-profile strong
+
+# verifica notturna di tutti i container, esce al primo problema
+for f in /backup/*.ecf; do
+  cryptera verify "$f" --quiet --password-env BACKUP_PW || exit $?
+done
+
+# ripristino, con estrazione automatica del container cartella
+cryptera decrypt /backup/docs.ecf -o ~/restore --password-env BACKUP_PW
+
+# ispezione senza password (JSON per jq)
+cryptera meta /backup/docs.ecf --json | jq '.meta.plain_size, .meta.container'
+```
+
+```powershell
+# Windows / PowerShell: password da variabile d'ambiente, con controllo dell'esito
+$env:CRYPTERA_PASSWORD = (Get-Secret Cryptera -AsPlainText)
+.\cryptera.exe encrypt C:\Dati\report.pdf -o D:\backup\report.ecf --json --quiet
+switch ($LASTEXITCODE) {
+  0 { "ok" }
+  3 { "password errata" }
+  5 { "output già presente" }
+  default { "errore $LASTEXITCODE" }
+}
+```
+
+> Non esiste ancora un comando batch: per più file si itera nella shell, come
+> negli esempi. Il container prodotto dalla CLI è identico a quello della GUI e
+> viceversa.
 
 ---
 
@@ -261,6 +382,15 @@ autenticazione".
 Cryptera/
 ├── src/                    # Crypto core (lib crate: crypto_core_rs)
 │   └── lib.rs              # AES-GCM, Argon2id, Reed-Solomon, header v5
+├── ops/                    # Livello condiviso GUI+CLI (lib crate: cryptera_ops)
+│   └── src/lib.rs          # TAR, estrazione sicura, profili sec/int
+├── cli/                    # CLI autonoma (bin crate: cryptera_cli → `cryptera`)
+│   ├── src/main.rs         # comandi, dispatch, default dei percorsi
+│   ├── src/password.rs     # sorgenti password (mai da argv)
+│   ├── src/paths.rs        # output di default, sanitizzazione nomi da header
+│   ├── src/report.rs       # output testuale / JSON, progress su stderr
+│   ├── src/error.rs        # codici di uscita
+│   └── tests/              # roundtrip end-to-end sul binario reale
 ├── src-tauri/              # Tauri backend (bin crate: crypto_tauri)
 │   ├── src/
 │   │   ├── main.rs         # Tauri commands, AppState, AuditState, tray, updater
@@ -306,6 +436,8 @@ Il progetto usa **Semantic Versioning** (`MAJOR.MINOR.PATCH`):
 La versione corrente è definita in `VERSION` e **deve essere identica** in:
 - `VERSION`
 - `Cargo.toml` (crypto_core_rs)
+- `ops/Cargo.toml`
+- `cli/Cargo.toml`
 - `src-tauri/Cargo.toml`
 - `src-tauri/tauri.conf.json`
 

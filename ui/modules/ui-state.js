@@ -49,9 +49,10 @@ export function setBusy(value) {
     }
     if (pauseBtn) pauseBtn.disabled = !value;
     if (cancelBtn) cancelBtn.disabled = !value;
-    // Re-enabling every button above also re-enables the Choose button of the
-    // inactive source mode; re-apply the File/Folder gating so it stays
-    // consistent with the selected mode once the operation finishes.
+    // Re-enabling every button above also reaches the inactive source mode.
+    // Since 2.1.0 that mode's controls are hidden rather than disabled, so this
+    // is belt-and-braces: it keeps the panel consistent with state.mode no
+    // matter how the gating is implemented.
     if (!value) updateMode(state.mode);
 }
 
