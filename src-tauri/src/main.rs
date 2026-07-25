@@ -543,7 +543,12 @@ async fn decrypt(
         safe_extract_tar(&tar_path, &req.output_path)?;
 
         if req.keep_tar {
-            let target = Path::new(&req.output_path).join("decrypted.tar");
+            // Name the kept archive after its actual compression (sniffed from
+            // the bytes) rather than always ".tar".
+            let suffix = cryptera_ops::detect_archive_comp(Path::new(&tar_path))
+                .map(|c| c.tar_suffix())
+                .unwrap_or(".tar");
+            let target = Path::new(&req.output_path).join(format!("decrypted{suffix}"));
             let _ = std::fs::copy(&tar_path, target);
         }
 

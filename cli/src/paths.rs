@@ -61,6 +61,9 @@ pub fn sanitize_stored_filename(name: &str) -> Option<&str> {
     if trimmed.contains('\0') {
         return None;
     }
+    if is_windows_reserved(trimmed) {
+        return None;
+    }
     // Belt and braces: after all the checks above this must be one Normal
     // component.
     let mut comps = Path::new(trimmed).components();
@@ -68,6 +71,30 @@ pub fn sanitize_stored_filename(name: &str) -> Option<&str> {
         (Some(Component::Normal(_)), None) => Some(trimmed),
         _ => None,
     }
+}
+
+/// Windows reserved device names (CON, NUL, COM1-9, LPT1-9, ...) are devices,
+/// not files, whatever the extension: `CON.txt` still opens the console. A
+/// container is untrusted input, so a stored name that resolves to a device is
+/// rejected on every platform (the container may be opened on Windows later).
+fn is_windows_reserved(name: &str) -> bool {
+    // Compare the stem before the first '.', case-insensitively.
+    let stem = name.split('.').next().unwrap_or(name);
+    const RESERVED: [&str; 4] = ["CON", "PRN", "AUX", "NUL"];
+    if RESERVED.iter().any(|r| stem.eq_ignore_ascii_case(r)) {
+        return true;
+    }
+    // COM1-9 / LPT1-9 (and the COM²/COM³ superscript variants Windows also
+    // reserves are out of scope for ASCII names).
+    let up = stem.to_ascii_uppercase();
+    for prefix in ["COM", "LPT"] {
+        if let Some(rest) = up.strip_prefix(prefix) {
+            if rest.len() == 1 && rest.as_bytes()[0].is_ascii_digit() && rest != "0" {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// True when the directory exists and holds at least one entry.
@@ -140,5 +167,32 @@ mod tests {
     fn traversal_in_stored_name_cannot_escape_the_container_dir() {
         let out = default_decrypt_output(Path::new("/safe/blob.ecf"), "../../etc/passwd");
         assert_eq!(out, PathBuf::from("/safe/blob"));
+    }
+
+    #[test]
+    fn windows_device_names_are_rejected_regardless_of_extension() {
+        for name in [
+            "CON",
+            "con",
+            "NUL",
+            "nul.txt",
+            "AUX",
+            "PRN.pdf",
+            "COM1",
+            "com9",
+            "LPT1",
+            "lpt3.dat",
+            "Aux.tar.gz",
+        ] {
+            assert!(
+                sanitize_stored_filename(name).is_none(),
+                "{name:?} must be rejected as a reserved device name"
+            );
+        }
+        // Names that merely start like a device but are not one stay valid.
+        assert_eq!(sanitize_stored_filename("CONFIG"), Some("CONFIG"));
+        assert_eq!(sanitize_stored_filename("COM10"), Some("COM10"));
+        assert_eq!(sanitize_stored_filename("COM0"), Some("COM0"));
+        assert_eq!(sanitize_stored_filename("LPT.txt"), Some("LPT.txt"));
     }
 }

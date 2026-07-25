@@ -516,11 +516,10 @@ fn run_decrypt(args: DecryptArgs, out: &Reporter) -> Result<(), CliError> {
     }
     std::fs::create_dir_all(&output).map_err(|e| CliError::new(ERR_IO, e.to_string()))?;
 
-    // safe_extract_tar sniffs the compression from the extension, so the
-    // temporary TAR has to carry the suffix recorded in the header.
-    let suffix = tar_extension(&header.filename);
+    // safe_extract_tar sniffs the codec from the archive's magic bytes, so the
+    // temp file needs no meaningful name or extension.
     let tmp_dir = tempfile::tempdir().map_err(|e| CliError::new(ERR_IO, e.to_string()))?;
-    let tar_path = tmp_dir.path().join(format!("payload{suffix}"));
+    let tar_path = tmp_dir.path().join("payload");
 
     out.stage("decrypting");
     let meta = decrypt_file_ex_rs_controlled(
@@ -532,22 +531,15 @@ fn run_decrypt(args: DecryptArgs, out: &Reporter) -> Result<(), CliError> {
         Some(&mut progress),
     )?;
 
-    // The name may only become readable after decryption (v5 encrypts it), in
-    // which case the temp file needs renaming before the extension sniffing.
-    let real_suffix = tar_extension(&meta.filename);
-    let tar_path = if real_suffix != suffix {
-        let renamed = tmp_dir.path().join(format!("payload{real_suffix}"));
-        std::fs::rename(&tar_path, &renamed).map_err(|e| CliError::new(ERR_IO, e.to_string()))?;
-        renamed
-    } else {
-        tar_path
-    };
-
     out.stage("extracting");
     safe_extract_tar(&path_str(&tar_path), &path_str(&output))?;
 
     if args.keep_tar {
-        let target = output.join("decrypted.tar");
+        // Name the kept archive after its actual compression, not always ".tar".
+        let suffix = cryptera_ops::detect_archive_comp(&tar_path)
+            .map(|c| c.tar_suffix())
+            .unwrap_or(".tar");
+        let target = output.join(format!("decrypted{suffix}"));
         std::fs::copy(&tar_path, &target).map_err(|e| CliError::new(ERR_IO, e.to_string()))?;
     }
 
@@ -567,20 +559,6 @@ fn scratch_sibling(dir: &Path) -> PathBuf {
         }
     }
     unreachable!("u32 candidates exhausted")
-}
-
-/// TAR extension recorded in the stored archive name, defaulting to `.tar`.
-fn tar_extension(stored_name: &str) -> &'static str {
-    let lower = stored_name.to_lowercase();
-    if lower.ends_with(".tar.gz") || lower.ends_with(".tgz") {
-        ".tar.gz"
-    } else if lower.ends_with(".tar.bz2") || lower.ends_with(".tbz2") {
-        ".tar.bz2"
-    } else if lower.ends_with(".tar.xz") || lower.ends_with(".txz") {
-        ".tar.xz"
-    } else {
-        ".tar"
-    }
 }
 
 fn run_verify(args: VerifyArgs, out: &Reporter) -> Result<(), CliError> {
@@ -638,16 +616,6 @@ mod tests {
     #[test]
     fn cli_definition_is_valid() {
         Cli::command().debug_assert();
-    }
-
-    #[test]
-    fn tar_extension_follows_the_stored_name() {
-        assert_eq!(tar_extension("photos.tar.gz"), ".tar.gz");
-        assert_eq!(tar_extension("photos.TGZ"), ".tar.gz");
-        assert_eq!(tar_extension("photos.tar.bz2"), ".tar.bz2");
-        assert_eq!(tar_extension("photos.tar.xz"), ".tar.xz");
-        assert_eq!(tar_extension("photos.tar"), ".tar");
-        assert_eq!(tar_extension(""), ".tar");
     }
 
     #[test]

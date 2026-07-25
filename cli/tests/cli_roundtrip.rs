@@ -104,6 +104,76 @@ fn folder_roundtrip_extracts_and_skips_symlinks() {
     assert!(!restored.join("link").exists(), "symlinks must be skipped");
 }
 
+// Regression: a compressed folder container with a hidden filename has no
+// suffix to sniff, so extraction must recover the codec from the archive bytes.
+// Every codec, with --keep-tar to check the kept archive is named for its
+// actual compression.
+#[test]
+fn compressed_hidden_filename_folder_still_extracts() {
+    for comp in ["gz", "bz2", "xz"] {
+        let dir = tmp();
+        let src = dir.path().join("data");
+        std::fs::create_dir_all(src.join("sub")).unwrap();
+        std::fs::write(src.join("a.txt"), b"one").unwrap();
+        std::fs::write(src.join("sub/b.txt"), b"two").unwrap();
+
+        run_ok(
+            dir.path(),
+            &[
+                "encrypt",
+                "data",
+                "--folder-comp",
+                comp,
+                "--hide-filename",
+                "-o",
+                "c.ecf",
+                "--quiet",
+            ],
+        );
+        // Name is hidden: meta (no password) shows nothing to sniff from.
+        let out = run(dir.path(), &["meta", "c.ecf", "--json", "--quiet"]);
+        assert_eq!(json(&out)["meta"]["filename"], "", "comp={comp}");
+
+        let out = run(
+            dir.path(),
+            &[
+                "decrypt",
+                "c.ecf",
+                "-o",
+                "r",
+                "--keep-tar",
+                "--json",
+                "--quiet",
+            ],
+        );
+        assert_eq!(
+            code(&out),
+            0,
+            "comp={comp}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(json(&out)["extracted"], true, "comp={comp}");
+
+        let r = dir.path().join("r/data");
+        assert_eq!(
+            std::fs::read(r.join("a.txt")).unwrap(),
+            b"one",
+            "comp={comp}"
+        );
+        assert_eq!(
+            std::fs::read(r.join("sub/b.txt")).unwrap(),
+            b"two",
+            "comp={comp}"
+        );
+        // The kept tar is named for its real compression, not always ".tar".
+        let kept = dir.path().join(format!(
+            "r/decrypted.tar.{}",
+            if comp == "gz" { "gz" } else { comp }
+        ));
+        assert!(kept.exists(), "comp={comp}: expected {}", kept.display());
+    }
+}
+
 #[test]
 fn wrong_password_exits_3_with_a_machine_readable_code() {
     let dir = tmp();

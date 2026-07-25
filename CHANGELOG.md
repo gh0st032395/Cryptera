@@ -6,6 +6,33 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **Compressed folder archives could not be extracted.** Extraction picked the
+  decompressor from the file-name extension, but the folder-archive codec
+  (gz/bz2/xz) is recorded nowhere in the `.ecf` header — only in the stored
+  name's suffix. The GUI decrypts into an unnamed temp file, so it failed to
+  extract **any** compressed folder (`EXTRACT_ERROR`, nothing written, and the
+  keep-tar fallback never ran); the CLI failed the same way whenever the folder
+  was encrypted with `--hide-filename`. `safe_extract_tar` now detects the codec
+  from the archive's magic bytes, independent of any name, fixing both front-ends
+  (regression tests for all three codecs from a suffix-less path). The kept
+  archive (`--keep-tar` / "keep tar") is now named for its real compression
+  (`decrypted.tar.gz`) instead of always `decrypted.tar`.
+
+### Security
+
+- **Bumped crossbeam-epoch to 0.9.20** (RUSTSEC-2026-0204, invalid-pointer
+  dereference; reached transitively via rayon) in the root and Tauri lockfiles.
+- **CLI rejects Windows reserved device names** (`CON`, `NUL`, `COM1`–`COM9`,
+  `LPT1`–`LPT9`, with any extension) when deriving an output path from a
+  container's stored filename, alongside the existing separator/`..`/drive-letter
+  checks.
+
+---
+
 ## [2.1.0] — 2026-07-24
 
 ### Added

@@ -200,27 +200,76 @@ pub fn create_tar(
     Ok((tmp, format!("{base_name}{}", tar_suffix(comp))))
 }
 
-/// Unpack a TAR (compression auto-detected from the extension) into `out_dir`,
-/// rejecting entries that would escape it and skipping links.
+/// Compression applied to a folder's TAR archive.
+///
+/// This codec is **not** recorded in the .ecf header: historically it lived
+/// only in the stored filename's suffix (`photos.tar.gz`). That suffix is
+/// unavailable to any caller that decrypts into an unnamed temp file (the GUI)
+/// or that hid the filename at encrypt time, so extraction must recover the
+/// codec from the archive bytes themselves.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ArchiveComp {
+    None,
+    Gz,
+    Bz2,
+    Xz,
+}
+
+impl ArchiveComp {
+    /// Detect the codec from a byte prefix (the first 6 bytes are enough).
+    /// These magic numbers start with control bytes (0x1f / 0xfd) or "BZh",
+    /// none of which begin a real TAR entry name, so a plain archive is never
+    /// misdetected.
+    pub fn sniff(prefix: &[u8]) -> Self {
+        if prefix.starts_with(&[0x1f, 0x8b]) {
+            Self::Gz
+        } else if prefix.starts_with(b"BZh") {
+            Self::Bz2
+        } else if prefix.starts_with(&[0xfd, b'7', b'z', b'X', b'Z', 0x00]) {
+            Self::Xz
+        } else {
+            Self::None
+        }
+    }
+
+    /// The `.tar[.ext]` suffix that matches this codec.
+    pub fn tar_suffix(self) -> &'static str {
+        match self {
+            Self::None => ".tar",
+            Self::Gz => ".tar.gz",
+            Self::Bz2 => ".tar.bz2",
+            Self::Xz => ".tar.xz",
+        }
+    }
+}
+
+/// Sniff a file's archive compression from its leading magic bytes.
+pub fn detect_archive_comp(path: &Path) -> std::io::Result<ArchiveComp> {
+    use std::io::Read;
+    let mut f = std::fs::File::open(path)?;
+    let mut buf = [0u8; 6];
+    let n = f.read(&mut buf)?;
+    Ok(ArchiveComp::sniff(&buf[..n]))
+}
+
+/// Unpack a TAR (compression auto-detected from the magic bytes, not the file
+/// name) into `out_dir`, rejecting entries that would escape it and skipping
+/// links.
 pub fn safe_extract_tar(tar_path: &str, out_dir: &str) -> Result<(), OpError> {
     extract_inner(tar_path, out_dir).map_err(|e| OpError::new(ERR_EXTRACT, e.to_string()))
 }
 
 fn extract_inner(tar_path: &str, out_dir: &str) -> Result<(), std::io::Error> {
     let out_dir = Path::new(out_dir).to_path_buf();
+    let comp = detect_archive_comp(Path::new(tar_path))?;
     let file = std::fs::File::open(tar_path)?;
 
-    let path_str = tar_path.to_lowercase();
-    let decoder: Box<dyn std::io::Read> =
-        if path_str.ends_with(".tar.gz") || path_str.ends_with(".tgz") {
-            Box::new(flate2::read::GzDecoder::new(file))
-        } else if path_str.ends_with(".tar.bz2") || path_str.ends_with(".tbz2") {
-            Box::new(bzip2::read::BzDecoder::new(file))
-        } else if path_str.ends_with(".tar.xz") || path_str.ends_with(".txz") {
-            Box::new(xz2::read::XzDecoder::new(file))
-        } else {
-            Box::new(file)
-        };
+    let decoder: Box<dyn std::io::Read> = match comp {
+        ArchiveComp::Gz => Box::new(flate2::read::GzDecoder::new(file)),
+        ArchiveComp::Bz2 => Box::new(bzip2::read::BzDecoder::new(file)),
+        ArchiveComp::Xz => Box::new(xz2::read::XzDecoder::new(file)),
+        ArchiveComp::None => Box::new(file),
+    };
 
     let mut archive = tar::Archive::new(decoder);
 
@@ -289,27 +338,53 @@ mod tests {
     }
 
     #[test]
-    fn roundtrip_folder_through_tar() {
-        let src = tempfile::tempdir().unwrap();
-        std::fs::create_dir(src.path().join("sub")).unwrap();
-        std::fs::write(src.path().join("sub/a.txt"), b"hello").unwrap();
+    fn compression_is_sniffed_from_magic_bytes() {
+        assert_eq!(
+            ArchiveComp::sniff(&[0x1f, 0x8b, 0x08, 0x00]),
+            ArchiveComp::Gz
+        );
+        assert_eq!(ArchiveComp::sniff(b"BZh91AY"), ArchiveComp::Bz2);
+        assert_eq!(
+            ArchiveComp::sniff(&[0xfd, b'7', b'z', b'X', b'Z', 0x00]),
+            ArchiveComp::Xz
+        );
+        // A plain TAR starts with an entry name, never these magic bytes.
+        assert_eq!(ArchiveComp::sniff(b"sub/a.txt\0\0"), ArchiveComp::None);
+        assert_eq!(ArchiveComp::sniff(&[]), ArchiveComp::None);
+        assert_eq!(ArchiveComp::Bz2.tar_suffix(), ".tar.bz2");
+    }
 
-        let ctrl = ControlFlags::new();
-        let (tmp, name) = create_tar(src.path(), "gz", true, &ctrl, None).unwrap();
-        assert!(name.ends_with(".tar.gz"));
+    // Regression for the extraction bug: safe_extract_tar must recover a
+    // compressed archive even when the file name carries NO suffix — the
+    // situation the GUI (decrypting into an unnamed temp file) and any
+    // hidden-filename container land in. Covers all three codecs.
+    #[test]
+    fn extracts_compressed_folder_from_a_suffixless_path() {
+        for comp in ["none", "gz", "bz2", "xz"] {
+            let src = tempfile::tempdir().unwrap();
+            std::fs::create_dir(src.path().join("sub")).unwrap();
+            std::fs::write(src.path().join("sub/a.txt"), b"hello").unwrap();
 
-        // safe_extract_tar sniffs the compression from the extension, so the
-        // temp file has to carry it.
-        let tar_path = tmp.path().with_extension("tar.gz");
-        std::fs::copy(tmp.path(), &tar_path).unwrap();
+            let ctrl = ControlFlags::new();
+            let (tmp, _name) = create_tar(src.path(), comp, true, &ctrl, None).unwrap();
 
-        let out = tempfile::tempdir().unwrap();
-        safe_extract_tar(tar_path.to_str().unwrap(), out.path().to_str().unwrap()).unwrap();
+            // Extract straight from the NamedTempFile path, which has no
+            // extension — exactly what the GUI does.
+            let tar_path = tmp.path().to_string_lossy().to_string();
+            assert!(!tar_path.ends_with(".gz") && !tar_path.ends_with(".xz"));
 
-        let base = tar_base_name(src.path());
-        let extracted = out.path().join(&base).join("sub/a.txt");
-        assert_eq!(std::fs::read(extracted).unwrap(), b"hello");
-        let _ = std::fs::remove_file(&tar_path);
+            let out = tempfile::tempdir().unwrap();
+            safe_extract_tar(&tar_path, out.path().to_str().unwrap())
+                .unwrap_or_else(|e| panic!("comp={comp}: {e}"));
+
+            let base = tar_base_name(src.path());
+            let extracted = out.path().join(&base).join("sub/a.txt");
+            assert_eq!(std::fs::read(extracted).unwrap(), b"hello", "comp={comp}");
+
+            // And the codec is recoverable from the bytes for naming a kept tar.
+            let sniffed = detect_archive_comp(tmp.path()).unwrap();
+            assert_eq!(sniffed.tar_suffix(), tar_suffix(comp), "comp={comp}");
+        }
     }
 
     #[test]
