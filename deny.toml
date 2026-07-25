@@ -27,6 +27,12 @@ ignore = [
   "RUSTSEC-2025-0100",  # unic-ucd-ident unmaintained - urlpattern/tauri-utils
   # ── 2026 advisories ───────────────────────────────────────────────────────
   "RUSTSEC-2026-0097",  # rand unsound with custom logger - low practical risk
+  # quick-xml XML-parser DoS (quadratic attributes / unbounded namespace
+  # allocation). Reaches us only via plist -> Tauri bundling, capped at
+  # quick-xml ^0.38 (patched in 0.41); the XML parsed is the app's own bundle
+  # metadata, never attacker-controlled input, so the DoS does not apply.
+  "RUSTSEC-2026-0194",  # quick-xml quadratic duplicate-attribute check
+  "RUSTSEC-2026-0195",  # quick-xml unbounded namespace-declaration allocation
 ]
 
 [licenses]

@@ -20,7 +20,13 @@ jobs:
         run: cargo install cargo-audit --locked
       - name: Run cargo-audit
         working-directory: ${{ matrix.crate_path }}
-        run: cargo audit
+        # cargo-audit does not read deny.toml, so the quick-xml DoS advisories
+        # (Tauri-transitive via plist, capped at ^0.38; XML parsed is the app's
+        # own bundle metadata, not attacker input) are ignored here too. Keep in
+        # sync with the deny.toml ignore list. Informational advisories
+        # (unmaintained/unsound) do not fail cargo-audit by default, so only the
+        # real vulnerabilities need listing.
+        run: cargo audit --ignore RUSTSEC-2026-0194 --ignore RUSTSEC-2026-0195
 
   deny:
     runs-on: ubuntu-latest
@@ -33,11 +39,14 @@ jobs:
       - name: Run cargo-deny
         run: cargo deny check advisories bans licenses sources
 
+      # --manifest-path and --config are global options: they must precede the
+      # `check` subcommand. The root deny.toml (ignore list) is reused so the
+      # Tauri-transitive ignores apply to these crates too.
       - name: Run cargo-deny (ops)
-        run: cargo deny --manifest-path ops/Cargo.toml check advisories bans licenses sources --config deny.toml
+        run: cargo deny --manifest-path ops/Cargo.toml --config deny.toml check advisories bans licenses sources
 
       - name: Run cargo-deny (cli)
-        run: cargo deny --manifest-path cli/Cargo.toml check advisories bans licenses sources --config deny.toml
+        run: cargo deny --manifest-path cli/Cargo.toml --config deny.toml check advisories bans licenses sources
 
   version-check:
     runs-on: windows-latest
