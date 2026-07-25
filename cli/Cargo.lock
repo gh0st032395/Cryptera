@@ -278,7 +278,7 @@ checksum = "61803da095bee82a81bb1a452ecc25d3b2f1416d1897eb86430c6159ef717c17"
 
 [[package]]
 name = "cryptera_cli"
-version = "2.1.0"
+version = "2.1.1"
 dependencies = [
  "clap",
  "cryptera_ops",
@@ -292,7 +292,7 @@ dependencies = [
 
 [[package]]
 name = "cryptera_ops"
-version = "2.1.0"
+version = "2.1.1"
 dependencies = [
  "bzip2",
  "crypto_core_rs",
@@ -316,7 +316,7 @@ dependencies = [
 
 [[package]]
 name = "crypto_core_rs"
-version = "2.1.0"
+version = "2.1.1"
 dependencies = [
  "aes-gcm",
  "argon2",
